@@ -26,6 +26,7 @@ abstract interface class WebPlayerBridge {
   Future<String> clickOfficialPlay();
   Future<String> clickSongPagePlay();
   Future<String> pageTitle();
+  Future<void> openHomeFor(WebPlayerTarget target);
   Future<String> runScript(String source);
   Future<List<OfficialSearchResult>> searchNetease(
     String query, {
@@ -69,6 +70,9 @@ class HandleWebPlayerBridge implements WebPlayerBridge {
 
   @override
   Future<String> pageTitle() => handle.pageTitle();
+
+  @override
+  Future<void> openHomeFor(WebPlayerTarget target) => handle.openHome(target);
 
   @override
   Future<String> runScript(String source) => handle.runScript(source);
@@ -182,44 +186,30 @@ class WebPlaybackEngine extends ChangeNotifier {
     _lastError = null;
     notifyListeners();
     try {
-      await bridge.openTrack(target, source.providerTrackId);
+      var clicked = await _openAndClick(source.providerTrackId, attempt: 0);
 
-      var clicked = false;
-      for (var attempt = 0; attempt < 16; attempt++) {
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        final result = await bridge.clickSongPagePlay();
-        if (result.startsWith('click-error')) {
-          _lastError = '官方页面点击播放失败';
-          return false;
-        }
-        if (result == 'clicked') {
-          clicked = true;
-          break;
-        }
-        // 页面还在加载，继续等。
+      // 页面没渲染出播放按钮（常见于 VIP/无版权曲目或页面卡住）：
+      // 回首页再打开一次，避免把 WebView 留在坏状态——否则后续点歌都会失败。
+      if (!clicked) {
+        await bridge.openHomeFor(target);
+        await Future<void>.delayed(const Duration(milliseconds: 2500));
+        clicked = await _openAndClick(source.providerTrackId, attempt: 1);
       }
 
       if (!clicked) {
-        _lastError = '官方歌曲页没有加载出播放按钮';
+        _lastError = '这首歌在官方页面无法播放（可能需要 VIP 或无版权）';
         return false;
       }
 
       // 等真实元素起播，并确认放的是目标曲目（标题匹配）而不是上一首。
+      // 注意：只在"确实放错了歌"时才补点一次，避免重复点击把歌重头播。
       final expected = _normalize(track.title);
-      for (var attempt = 0; attempt < 3; attempt++) {
-        for (var i = 0; i < 5; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 400));
-          await _poll();
-          if (!_state.hasMedia || _state.duration.inMilliseconds == 0) continue;
-          final playing = !_state.paused;
-          final matches = _titleMatches(_state.nowPlaying, expected);
-          if (playing && matches) return true;
-          if (playing && !matches && _state.nowPlaying.isNotEmpty) {
-            // 放的是别的歌：再点一次歌曲页按钮。
-            break;
-          }
+      for (var attempt = 0; attempt < 2; attempt++) {
+        if (await _waitForPlayback(expected, tries: 8)) return true;
+        if (attempt == 0) {
+          await bridge.clickSongPagePlay();
+          await Future<void>.delayed(const Duration(milliseconds: 1500));
         }
-        await bridge.clickSongPagePlay();
       }
 
       _lastError = _state.hasMedia && _state.nowPlaying.isNotEmpty
@@ -235,8 +225,39 @@ class WebPlaybackEngine extends ChangeNotifier {
     }
   }
 
+  /// 轮询等待"正在播放且曲目匹配"。
+  ///
+  /// 判定顺序：播放栏曲名 → 歌曲页标题（页面标题里也带曲名，比播放栏更新更及时）。
+  /// 只要其一匹配就算成功，避免因为播放栏文字延迟而重复点击、把歌重头播。
+  Future<bool> _waitForPlayback(String expected, {required int tries}) async {
+    for (var i = 0; i < tries; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await _poll();
+      if (!_state.hasMedia || _state.duration.inMilliseconds == 0) continue;
+      if (_state.paused) continue;
+      if (_titleMatches(_state.nowPlaying, expected)) return true;
+      if (i % 2 == 1) {
+        final title = await bridge.pageTitle();
+        if (_titleMatches(title, expected)) return true;
+      }
+    }
+    return false;
+  }
+
   static String _normalize(String value) =>
       value.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+
+  /// 打开曲目页并尝试点中播放按钮，返回是否点到了。
+  Future<bool> _openAndClick(String trackId, {required int attempt}) async {
+    await bridge.openTrack(target, trackId);
+    for (var i = 0; i < 14; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final result = await bridge.clickSongPagePlay();
+      if (result.startsWith('click-error')) return false;
+      if (result.startsWith('clicked')) return true;
+    }
+    return false;
+  }
 
   static bool _titleMatches(String nowPlaying, String expected) {
     if (nowPlaying.isEmpty) return false;

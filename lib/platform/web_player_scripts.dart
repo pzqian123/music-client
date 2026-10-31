@@ -209,15 +209,43 @@ String mediaVolumeScript(double volume) {
 /// 只点「歌曲页自己的播放按钮」。
 ///
 /// 关键：绝不能回退到播放栏的播放键——那是"继续上一首"，
-/// 会导致点新歌却在放旧歌。
+/// 会导致点新歌却在放旧歌。只接受标题链接附近的播放控件。
 const String neteaseSongPagePlayScript = r"""
 (function () {
   var frame = document.querySelector('#g_iframe');
   var doc = frame && frame.contentDocument ? frame.contentDocument : document;
-  var node = doc.querySelector('a.u-btni-addply') || doc.querySelector('.u-btni-addply');
-  if (!node) { return 'no-play-button'; }
-  try { node.click(); } catch (e) { return 'click-error:' + e; }
-  return 'clicked';
+  var selectors = [
+    'a.u-btni-addply',
+    '.u-btni-addply',
+    'a[data-res-action="play"]',
+    '.u-btni-play',
+    '.u-btni.u-btni-play',
+    'a[title="播放"]',
+    'button[title="播放"]'
+  ];
+  for (var i = 0; i < selectors.length; i++) {
+    var node = doc.querySelector(selectors[i]);
+    if (!node) { continue; }
+    // 跳过禁用/置灰的按钮（VIP、无版权曲目会出现）。
+    var cls = (node.className || '') + '';
+    if (cls.indexOf('dis') !== -1) { continue; }
+    try { node.click(); } catch (e) { return 'click-error:' + e; }
+    return 'clicked:' + selectors[i];
+  }
+  return 'no-play-button';
+})();
+""";
+
+/// 判断当前歌曲页是否是「不可播放」状态（VIP / 无版权 / 下架）。
+const String neteaseSongPageBlockedScript = r"""
+(function () {
+  var frame = document.querySelector('#g_iframe');
+  var doc = frame && frame.contentDocument ? frame.contentDocument : document;
+  var text = (doc.body && doc.body.innerText) || '';
+  if (text.indexOf('无版权') !== -1) { return 'no-copyright'; }
+  if (text.indexOf('已下架') !== -1) { return 'removed'; }
+  if (text.indexOf('VIP') !== -1 && text.indexOf('播放') === -1) { return 'vip'; }
+  return '';
 })();
 """;
 

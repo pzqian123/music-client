@@ -301,7 +301,12 @@ class MusicController extends ChangeNotifier {
     final engine = webEngine;
     if (engine == null) return;
     _webMode = true;
-    _playback = _playback.copyWith(
+    // 切歌先清空上一条的进度与状态，避免失败后残留旧曲目的时间和歌词。
+    _lyrics = null;
+    _playback = PlaybackState(
+      queue: _playback.queue,
+      queueIndex: _playback.queueIndex,
+      position: Duration.zero,
       status: PlaybackStatus.loading,
       activeService: MusicService.netease,
     );

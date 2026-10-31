@@ -48,6 +48,9 @@ class _FakeBridge implements WebPlayerBridge {
   Future<String> pageTitle() async => '';
 
   @override
+  Future<void> openHomeFor(WebPlayerTarget target) async {}
+
+  @override
   Future<String> runScript(String source) async => '';
 
   @override
