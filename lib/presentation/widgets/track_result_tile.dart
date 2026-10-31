@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../domain/models.dart';
@@ -24,7 +26,7 @@ class TrackResultTile extends StatelessWidget {
   final VoidCallback onTap;
   final ValueChanged<MusicService> onSelectSource;
   final VoidCallback onAddToQueue;
-  final List<int>? imageBytes;
+  final Uint8List? imageBytes;
 
   @override
   Widget build(BuildContext context) {

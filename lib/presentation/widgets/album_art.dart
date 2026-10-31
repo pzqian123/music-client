@@ -20,7 +20,7 @@ class AlbumArt extends StatelessWidget {
   final String? artworkUrl;
 
   /// 由官方页面抓到的图片字节（优先级高于网络地址）。
-  final List<int>? imageBytes;
+  final Uint8List? imageBytes;
   final double size;
   final double radius;
 
@@ -57,10 +57,12 @@ class AlbumArt extends StatelessWidget {
       return ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: Image.memory(
-          Uint8List.fromList(bytes),
+          bytes,
           width: size,
           height: size,
           fit: BoxFit.cover,
+          // 同一个字节实例复用缓存；切换曲目时保留上一帧，避免闪烁。
+          gaplessPlayback: true,
           errorBuilder: (_, _, _) => fallback,
         ),
       );

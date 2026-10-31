@@ -92,9 +92,11 @@ class MusicController extends ChangeNotifier {
   final PlaybackMachine _machine = const PlaybackMachine();
 
   /// 官方页面抓到的封面字节（按 providerTrackId 索引）。
-  final Map<String, List<int>> _coverBytes = {};
+  /// 注意：这里缓存的是 `Uint8List` 实例本身——每次重建都新建实例会让
+  /// MemoryImage 判定为新图、反复解码，封面就会闪烁。
+  final Map<String, Uint8List> _coverBytes = {};
 
-  List<int>? coverBytesFor(Track track) {
+  Uint8List? coverBytesFor(Track track) {
     final source = track.sourceFor(MusicService.netease);
     if (source == null) return null;
     return _coverBytes[source.providerTrackId];
@@ -197,8 +199,11 @@ class MusicController extends ChangeNotifier {
               },
         ]..removeWhere((item) => item['id']!.isEmpty);
         if (byteRequests.isNotEmpty) {
-          _coverBytes.addAll(await engine.fetchCoverBytes(byteRequests));
+          final bytes = await engine.fetchCoverBytes(byteRequests);
           if (seq != _searchSeq) return;
+          for (final entry in bytes.entries) {
+            _coverBytes[entry.key] = Uint8List.fromList(entry.value);
+          }
         }
 
         _search = SearchState(
