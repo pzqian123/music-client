@@ -1,0 +1,134 @@
+/// 隐藏式网页播放引擎的领域模型与适配器（纯 Dart，可单测）。
+library;
+
+import '../domain/models.dart';
+
+/// 从隐藏页面回读到的播放状态。
+class WebPlayerState {
+  final bool hasMedia;
+  final bool paused;
+  final bool ended;
+  final Duration position;
+  final Duration duration;
+  final double volume;
+
+  const WebPlayerState({
+    required this.hasMedia,
+    required this.paused,
+    this.ended = false,
+    this.position = Duration.zero,
+    this.duration = Duration.zero,
+    this.volume = 1,
+  });
+
+  const WebPlayerState.empty()
+      : hasMedia = false,
+        paused = true,
+        ended = false,
+        position = Duration.zero,
+        duration = Duration.zero,
+        volume = 1;
+
+  bool get isPlaying => hasMedia && !paused && !ended;
+
+  double get progress {
+    if (duration.inMilliseconds <= 0) return 0;
+    final raw = position.inMilliseconds / duration.inMilliseconds;
+    if (raw.isNaN || raw.isInfinite) return 0;
+    return raw.clamp(0.0, 1.0);
+  }
+
+  static WebPlayerState fromJsonObject(Map<String, dynamic> json) {
+    if (json['hasMedia'] != true) return const WebPlayerState.empty();
+    double asDouble(Object? value) =>
+        value is num && value.isFinite ? value.toDouble() : 0;
+    return WebPlayerState(
+      hasMedia: true,
+      paused: json['paused'] == true,
+      ended: json['ended'] == true,
+      position: Duration(milliseconds: (asDouble(json['position']) * 1000).round()),
+      duration: Duration(milliseconds: (asDouble(json['duration']) * 1000).round()),
+      volume: asDouble(json['volume']),
+    );
+  }
+}
+
+/// 各服务网页版的差异点：入口地址与曲目深链接。
+class WebPlayerTarget {
+  final MusicService service;
+
+  /// 首次登录/浏览时的页面。
+  final String homeUrl;
+
+  /// 打开某首歌曲的深链接（页面内自行开始播放）。
+  final String Function(String providerTrackId) trackUrl;
+
+  /// 该页面是否需要用户先登录。
+  final String loginHint;
+
+  const WebPlayerTarget({
+    required this.service,
+    required this.homeUrl,
+    required this.trackUrl,
+    required this.loginHint,
+  });
+}
+
+const WebPlayerTarget neteaseWebTarget = WebPlayerTarget(
+  service: MusicService.netease,
+  homeUrl: 'https://music.163.com',
+  trackUrl: _neteaseTrackUrl,
+  loginHint: '在打开的官方页面里用你自己的方式登录，登录完成后点「隐藏播放器」',
+);
+
+const WebPlayerTarget spotifyWebTarget = WebPlayerTarget(
+  service: MusicService.spotify,
+  homeUrl: 'https://open.spotify.com',
+  trackUrl: _spotifyTrackUrl,
+  loginHint: '在打开的官方页面里登录 Spotify（需要 Premium），完成后点「隐藏播放器」',
+);
+
+String _neteaseTrackUrl(String id) =>
+    'https://music.163.com/#/song?id=${Uri.encodeComponent(id)}';
+
+String _spotifyTrackUrl(String id) =>
+    'https://open.spotify.com/track/${Uri.encodeComponent(id)}';
+
+WebPlayerTarget? webTargetFor(MusicService service) {
+  switch (service) {
+    case MusicService.netease:
+      return neteaseWebTarget;
+    case MusicService.spotify:
+      return spotifyWebTarget;
+  }
+}
+
+/// 隐藏播放器的整体状态：哪家、是否就绪、当前是否在播。
+class WebPlaybackSnapshot {
+  final MusicService? service;
+  final bool attached;
+  final WebPlayerState state;
+  final String? lastError;
+
+  const WebPlaybackSnapshot({
+    this.service,
+    this.attached = false,
+    this.state = const WebPlayerState.empty(),
+    this.lastError,
+  });
+
+  WebPlaybackSnapshot copyWith({
+    MusicService? service,
+    bool? attached,
+    WebPlayerState? state,
+    String? lastError,
+    bool clearError = false,
+  }) {
+    return WebPlaybackSnapshot(
+      service: service ?? this.service,
+      attached: attached ?? this.attached,
+      state: state ?? this.state,
+      lastError: clearError ? null : (lastError ?? this.lastError),
+    );
+  }
+}

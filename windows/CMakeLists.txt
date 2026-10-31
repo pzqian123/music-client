@@ -32,6 +32,12 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# flutter_inappwebview（以及部分 C++/WinRT 插件）依赖 <experimental/coroutine>，
+# VS2026 附带的 MSVC 14.5x 已把该头文件标记为"即将移除"的硬错误。
+# 用全局 CXX flags 压掉该错误（目录级 define 不会传播到插件的 vcxproj）。
+set(CMAKE_CXX_FLAGS
+  "${CMAKE_CXX_FLAGS} /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by
