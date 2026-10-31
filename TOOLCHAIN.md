@@ -54,6 +54,17 @@ licenses: All SDK package licenses accepted
 | `flutter build windows --debug` | **阻塞**：`Building with plugins requires symlink support`（需开启「开发人员模式」） |
 | 解除方式 | 设置 → 系统 → 开发者选项 → 开发人员模式（需 UAC，当前进程非管理员无法代做） |
 
+## Windows 构建状态
+
+| 检查项 | 结果 |
+| --- | --- |
+| 开发人员模式 | ✅ 已开启（`AllowDevelopmentWithoutDevLicense=1`，`mklink` 验证可建链接） |
+| `flutter build windows --debug` | ✅ 成功，产物 `build/windows/x64/runner/Debug/music_client.exe` |
+| 实际启动 | ✅ 已启动并截图，见 `docs/screenshots/windows-app.png` |
+
+注：PowerShell 的 `New-Item -ItemType SymbolicLink` 仍会报“需要管理员权限”，
+但 `cmd /c mklink` 与 Flutter 工具链均可正常创建链接，不影响构建。
+
 ## 验证结论
 
 | 目标 | 状态 | 证据 |
@@ -61,8 +72,8 @@ licenses: All SDK package licenses accepted
 | 静态检查 | ✅ | `flutter analyze` → No issues found |
 | 测试 | ✅ | `flutter test` → 119 passed |
 | Android APK | ✅ | `build/app/outputs/flutter-apk/app-debug.apk`（152 MB，debug，含全部 ABI） |
+| Windows 桌面 | ✅ | `build/windows/x64/runner/Debug/music_client.exe`，已启动验证 |
 | Web 预览（仅用于看界面） | ✅ | `build/web` + `tools/serve_web.js`，截图见 `docs/screenshots/` |
-| Windows 桌面 | ⏳ 阻塞 | `Building with plugins requires symlink support`，需开启「开发人员模式」 |
 
 Android 首次构建踩到的坑（已修复并写入 `android/gradle.properties`）：
 
