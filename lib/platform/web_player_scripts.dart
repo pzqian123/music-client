@@ -13,13 +13,19 @@ const String mediaStateScript = r"""
     if (els[i].duration > 0 || !els[i].paused) { el = els[i]; break; }
   }
   if (!el && els.length) el = els[0];
-  if (!el) { return JSON.stringify({ hasMedia: false }); }
+  if (!el) {
+    return JSON.stringify({ hasMedia: false, mediaCount: els.length });
+  }
   return JSON.stringify({
     hasMedia: true,
+    mediaCount: els.length,
     paused: el.paused,
     ended: el.ended,
     position: el.currentTime || 0,
     duration: isFinite(el.duration) ? el.duration : 0,
+    readyState: el.readyState,
+    networkState: el.networkState,
+    errorCode: el.error ? el.error.code : 0,
     volume: el.volume,
     muted: el.muted,
     tag: el.tagName

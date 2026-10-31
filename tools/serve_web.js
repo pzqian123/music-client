@@ -35,18 +35,44 @@ http
     if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
       filePath = path.join(filePath, 'index.html');
     }
-    fs.readFile(filePath, (err, data) => {
-      if (err) {
-        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end('not found');
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('not found');
+      return;
+    }
+
+    // 支持 Range：否则 Chromium 会把音频当成未知长度的流（duration 为 Infinity）。
+    const stat = fs.statSync(filePath);
+    const contentType =
+      types[path.extname(filePath)] || 'application/octet-stream';
+    const range = req.headers.range;
+    if (range) {
+      const match = /bytes=(\d*)-(\d*)/.exec(range);
+      const start = match && match[1] ? Number(match[1]) : 0;
+      const end = match && match[2] ? Number(match[2]) : stat.size - 1;
+      if (start >= stat.size || end >= stat.size || start > end) {
+        res.writeHead(416, { 'content-range': `bytes */${stat.size}` });
+        res.end();
         return;
       }
-      res.writeHead(200, {
-        'content-type': types[path.extname(filePath)] || 'application/octet-stream',
+      res.writeHead(206, {
+        'content-type': contentType,
+        'content-length': end - start + 1,
+        'content-range': `bytes ${start}-${end}/${stat.size}`,
+        'accept-ranges': 'bytes',
         'cache-control': 'no-store',
       });
-      res.end(data);
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+      return;
+    }
+
+    res.writeHead(200, {
+      'content-type': contentType,
+      'content-length': stat.size,
+      'accept-ranges': 'bytes',
+      'cache-control': 'no-store',
     });
+    fs.createReadStream(filePath).pipe(res);
   })
   .listen(port, '127.0.0.1', () => {
     console.log(`serving ${root} at http://127.0.0.1:${port}`);

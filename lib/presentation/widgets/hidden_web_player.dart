@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -9,6 +10,12 @@ import '../../platform/web_player_scripts.dart';
 /// 控制隐藏播放器的句柄：由页面创建，交给 [HiddenWebPlayer] 绑定。
 class WebPlayerHandle {
   InAppWebViewController? _controller;
+
+  /// 最近一次原始 JS 返回，便于诊断。
+  String lastRaw = '';
+
+  /// 最近一次探测到的媒体元素数量。
+  int lastMediaCount = -1;
 
   bool get isAttached => _controller != null;
 
@@ -37,9 +44,22 @@ class WebPlayerHandle {
     await _controller?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
   }
 
+  Future<String> currentUrl() async {
+    final url = await _controller?.getUrl();
+    return url?.toString() ?? '';
+  }
+
   Future<WebPlayerState> readState() async {
     final raw = await _js(mediaStateScript);
+    lastRaw = raw ?? '';
+    lastMediaCount = _countFromRaw(lastRaw);
     return decodeState(raw);
+  }
+
+  static int _countFromRaw(String raw) {
+    final match = RegExp(r'"mediaCount"\s*:\s*(\d+)').firstMatch(raw);
+    if (match != null) return int.tryParse(match.group(1)!) ?? -1;
+    return raw.contains('"hasMedia":false') ? 0 : -1;
   }
 
   Future<void> toggle() async {
@@ -77,30 +97,66 @@ WebPlayerState decodeState(String? raw) {
   }
 }
 
+/// 官方网页播放器宿主。
+///
+/// 重要：**绝不改变它的尺寸或把它移出屏幕**。WebView2 一旦被重新布局或判定不可见，
+/// 页面可能重载、音频会被暂停。要"隐藏"时，请在本组件之上盖一层不透明面板。
 class HiddenWebPlayer extends StatefulWidget {
   const HiddenWebPlayer({
     super.key,
     required this.target,
     required this.handle,
-    required this.visible,
     this.onLoaded,
-    this.onState,
   });
 
   final WebPlayerTarget target;
   final WebPlayerHandle handle;
-  final bool visible;
   final VoidCallback? onLoaded;
-  final ValueChanged<WebPlayerState>? onState;
 
   @override
   State<HiddenWebPlayer> createState() => _HiddenWebPlayerState();
 }
 
 class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
+  WebViewEnvironment? _environment;
+  bool _environmentFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prepareEnvironment();
+  }
+
+  /// Windows 需要 WebView2 启动参数：
+  /// - `--autoplay-policy=no-user-gesture-required`：允许 JS 直接 play()（否则官方页面必须手点）
+  /// - `--disable-features=CalculateNativeWinOcclusion`：页面被盖住时不要判定为不可见而节流
+  Future<void> _prepareEnvironment() async {
+    if (!Platform.isWindows) return;
+    try {
+      final environment = await WebViewEnvironment.create(
+        settings: WebViewEnvironmentSettings(
+          additionalBrowserArguments:
+              '--autoplay-policy=no-user-gesture-required '
+              '--disable-features=CalculateNativeWinOcclusion',
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _environment = environment);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _environmentFailed = true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final webview = InAppWebView(
+    if (Platform.isWindows && _environment == null && !_environmentFailed) {
+      return const SizedBox.shrink();
+    }
+
+    return InAppWebView(
+      key: const ValueKey('official-web-player'),
+      webViewEnvironment: _environment,
       initialUrlRequest: URLRequest(url: WebUri(widget.target.homeUrl)),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
@@ -109,6 +165,7 @@ class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
         allowFileAccess: false,
         useShouldOverrideUrlLoading: false,
         isInspectable: false,
+        disableContextMenu: true,
       ),
       onWebViewCreated: (controller) {
         widget.handle.attach(controller);
@@ -116,13 +173,6 @@ class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
       onLoadStop: (controller, url) {
         widget.onLoaded?.call();
       },
-    );
-
-    // 关键：无论显示还是隐藏都保持同一棵组件树，只改变不透明度，
-    // 否则 InAppWebView 会被销毁——登录态和正在播放的音频都会丢。
-    return Opacity(
-      opacity: widget.visible ? 1 : 0,
-      child: IgnorePointer(ignoring: !widget.visible, child: webview),
     );
   }
 }

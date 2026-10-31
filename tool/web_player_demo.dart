@@ -1,4 +1,4 @@
-// 隐藏式网页播放器 Demo：验证「官方页面登录 → 隐藏 → 我们的 UI 控制」。
+// 隐藏式网页播放器 Demo：验证「官方页面登录 → 盖住页面 → 我们的 UI 控制」。
 // 用法：flutter run -d windows -t tool/web_player_demo.dart
 import 'dart:async';
 
@@ -30,8 +30,9 @@ class DemoPage extends StatefulWidget {
 class _DemoPageState extends State<DemoPage> {
   final WebPlayerHandle _handle = WebPlayerHandle();
   WebPlayerTarget _target = neteaseWebTarget;
-  bool _visible = true;
+  bool _covered = false;
   WebPlayerState _state = const WebPlayerState.empty();
+  String _url = '';
   Timer? _poll;
   final TextEditingController _idController = TextEditingController();
 
@@ -47,8 +48,12 @@ class _DemoPageState extends State<DemoPage> {
   Future<void> _refresh() async {
     if (!_handle.isAttached) return;
     final state = await _handle.readState();
+    final url = await _handle.currentUrl();
     if (!mounted) return;
-    setState(() => _state = state);
+    setState(() {
+      _state = state;
+      _url = url;
+    });
   }
 
   @override
@@ -67,8 +72,6 @@ class _DemoPageState extends State<DemoPage> {
   String _fmt(Duration d) =>
       '${d.inMinutes}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
 
-  String get _timeText => '${_fmt(_state.position)} / ${_fmt(_state.duration)}';
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -76,9 +79,9 @@ class _DemoPageState extends State<DemoPage> {
         title: const Text('隐藏播放器 Demo'),
         actions: [
           TextButton.icon(
-            onPressed: () => setState(() => _visible = !_visible),
-            icon: Icon(_visible ? Icons.visibility_off : Icons.visibility),
-            label: Text(_visible ? '隐藏播放器' : '显示播放器'),
+            onPressed: () => setState(() => _covered = !_covered),
+            icon: Icon(_covered ? Icons.visibility : Icons.visibility_off),
+            label: Text(_covered ? '显示官方页面' : '盖住官方页面'),
           ),
         ],
       ),
@@ -132,7 +135,9 @@ class _DemoPageState extends State<DemoPage> {
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                _target.loginHint,
+                _covered
+                    ? '官方页面已被盖住——下面是我们自己的控件'
+                    : _target.loginHint,
                 style: const TextStyle(fontSize: 12, color: Colors.white70),
               ),
             ),
@@ -141,82 +146,100 @@ class _DemoPageState extends State<DemoPage> {
           Expanded(
             child: Stack(
               children: [
-                if (!_visible)
-                  const Center(
-                    child: Text(
-                      '播放器已隐藏——用下方控件控制官方页面播放',
-                      style: TextStyle(color: Colors.white54),
-                    ),
-                  ),
-                // 唯一的 WebView 实例：只改变位置与尺寸，不重建。
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  right: _visible ? 0 : null,
-                  bottom: _visible ? 0 : null,
-                  width: _visible ? null : 2,
-                  height: _visible ? null : 2,
+                // 官方页面始终占满、尺寸不变；"隐藏"靠上面的不透明面板。
+                Positioned.fill(
                   child: HiddenWebPlayer(
                     target: _target,
                     handle: _handle,
-                    visible: _visible,
-                    onState: (state) => setState(() => _state = state),
+                    onLoaded: _refresh,
                   ),
                 ),
-              ],
-            ),
-          ),
-          if (!_visible) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        onPressed: () => _handle.toggle(),
-                        icon: Icon(
-                          _state.isPlaying ? Icons.pause : Icons.play_arrow,
+                if (_covered)
+                  Positioned.fill(
+                    child: ColoredBox(
+                      color: const Color(0xFF0B0B0F),
+                      child: _OurPlayerPanel(
+                        state: _state,
+                        timeText:
+                            '${_fmt(_state.position)} / ${_fmt(_state.duration)}',
+                        onToggle: () => _handle.toggle(),
+                        onSeek: (value) => _handle.seek(
+                          Duration(
+                            milliseconds:
+                                (value * _state.duration.inMilliseconds).round(),
+                          ),
                         ),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: _state.progress,
-                          onChanged: _state.hasMedia
-                              ? (value) => _handle.seek(
-                                    Duration(
-                                      milliseconds:
-                                          (value *
-                                                  _state.duration
-                                                      .inMilliseconds)
-                                              .round(),
-                                    ),
-                                  )
-                              : null,
-                        ),
-                      ),
-                      Text(_timeText),
-                    ],
-                  ),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _state.hasMedia
-                          ? (_state.isPlaying ? '官方页面：正在播放' : '官方页面：已暂停')
-                          : '官方页面：未检测到媒体元素（需先登录并播放一首歌）',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.white70,
                       ),
                     ),
                   ),
-                ],
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '诊断：媒体元素 ${_handle.lastMediaCount} 个 · '
+                '${_state.hasMedia ? (_state.isPlaying ? "播放中" : "已暂停") : "未检测到播放"} · '
+                '页面 ${_url.isEmpty ? "?" : Uri.parse(_url).path}',
+                style: const TextStyle(fontSize: 11, color: Colors.white38),
               ),
             ),
-          ],
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _OurPlayerPanel extends StatelessWidget {
+  const _OurPlayerPanel({
+    required this.state,
+    required this.timeText,
+    required this.onToggle,
+    required this.onSeek,
+  });
+
+  final WebPlayerState state;
+  final String timeText;
+  final VoidCallback onToggle;
+  final ValueChanged<double> onSeek;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(Icons.album, size: 96, color: Colors.white24),
+        const SizedBox(height: 16),
+        const Text('这是我们的播放界面', style: TextStyle(fontSize: 18)),
+        const SizedBox(height: 8),
+        Text(
+          state.hasMedia ? '官方页面正在输出音频' : '官方页面尚无媒体元素',
+          style: const TextStyle(fontSize: 12, color: Colors.white54),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: 420,
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: onToggle,
+                icon: Icon(state.isPlaying ? Icons.pause : Icons.play_arrow),
+              ),
+              Expanded(
+                child: Slider(
+                  value: state.progress,
+                  onChanged: state.hasMedia ? onSeek : null,
+                ),
+              ),
+              Text(timeText, style: const TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

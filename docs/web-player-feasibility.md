@@ -11,7 +11,40 @@
 | WebView2 是否支持 PlayReady | ✅ 支持 | EME 探针返回 `com.microsoft.playready → OK` |
 | Spotify 网页版能否在 WebView2 内加载 | ✅ 能 | 首页完整渲染（热播歌曲、登录、搜索） |
 | 网易云网页版能否在 WebView2 内加载 | ✅ 能 | 首页完整渲染（推荐、排行榜、登录） |
-| 隐藏后能否继续由我们的 UI 控制 | ⏳ 待登录实测 | 桥接层已实现，Demo 已可运行 |
+| 桥接层能否控制真实 `<audio>` | ✅ 能 | 自测：play / pause / seek / 状态回读全部正确 |
+| 页面被盖住后音频是否继续 | ✅ 继续 | 自测：覆盖后 2.5s 内位置推进 2502ms |
+
+## 桥接层自测结果（2026-10-31，本地音频页，不依赖任何账号）
+
+```
+initial       paused=true   0ms / 120000ms
+afterPlay     paused=false  1476ms          ← play() 生效
+afterSeek20   paused=false  21167ms         ← seek(20s) 生效
+afterPause    paused=true   21168ms         ← pause() 生效
+pausedStill   paused=true   21168ms         ← 暂停后不再推进（+0ms）
+coveredStart  paused=false  22029ms         ← 盖上不透明面板（模拟隐藏）
+coveredLater  paused=false  24531ms         ← 覆盖期间继续推进 2502ms
+```
+
+### 必须的两个 WebView2 启动参数
+
+缺一个都会失败，这是踩过的坑：
+
+```
+--autoplay-policy=no-user-gesture-required
+--disable-features=CalculateNativeWinOcclusion
+```
+
+- 第一个：否则 JS 调 `play()` 会被自动播放策略拦截（实测 `paused` 永远为 true）。
+- 第二个：否则页面被盖住/遮挡时 Chromium 判定不可见，会节流甚至暂停播放。
+
+在 `WebViewEnvironmentSettings.additionalBrowserArguments` 里设置。
+
+### 另一个坑：本地/自建静态服务器必须支持 Range
+
+不支持 `Accept-Ranges` / 206 时，Chromium 会把音频当成未知长度的流，
+`duration` 为 `Infinity`，进度条和跳转全部失效（自测第一次就是 0/0）。
+`tools/serve_web.js` 已补上 Range 支持。
 
 ## 技术路线
 

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>本地音频自测页</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #101014;
+        color: #eee;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        gap: 16px;
+      }
+      audio { width: 70%; }
+      p { color: #888; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h2>本地音频自测页</h2>
+    <audio id="tone" src="tone.wav" preload="auto" controls></audio>
+    <p>该页面用于验证隐藏播放器桥接：播放、暂停、跳转、被覆盖后是否继续。</p>
+    <script>
+      window.__ready = true;
+    </script>
+  </body>
+</html>
