@@ -7,7 +7,6 @@ import 'package:music_client/platform/official_handoff.dart';
 import 'package:music_client/platform/secure_credentials.dart';
 import 'package:music_client/providers/fake_netease_provider.dart';
 import 'package:music_client/providers/fake_spotify_provider.dart';
-import 'package:provider/provider.dart';
 
 void main() {
   testWidgets('应用壳显示三个导航入口', (tester) async {
