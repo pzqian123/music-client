@@ -304,6 +304,38 @@ const String neteaseSearchDebugScript = r"""
 })();
 """;
 
+/// 在官方页面上下文里取歌词（同源请求，自动带上页面自己的登录态）。
+///
+/// 返回的 LRC 带时间戳，可驱动逐行同步；没有逐字时间戳时回退逐行。
+String neteaseLyricFetchScript(String songId) {
+  final safe = RegExp(r'^\d+$').hasMatch(songId) ? songId : '';
+  return '''
+(function () {
+  window.__dshLyric = { status: 'pending' };
+  if ('$safe' === '') { window.__dshLyric = { status: 'error', message: 'invalid id' }; return 'invalid'; }
+  try {
+    fetch('/api/song/lyric?id=$safe&lv=1&tv=-1&kv=1', { credentials: 'include' })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        var lrc = (data && data.lrc && data.lrc.lyric) || '';
+        var tlyric = (data && data.tlyric && data.tlyric.lyric) || '';
+        window.__dshLyric = { status: 'ok', lrc: lrc, tlyric: tlyric };
+      })
+      .catch(function (error) {
+        window.__dshLyric = { status: 'error', message: String(error) };
+      });
+  } catch (error) {
+    window.__dshLyric = { status: 'error', message: String(error) };
+  }
+  return 'started';
+})();
+''';
+}
+
+/// 读取上一步写入的歌词结果。
+const String neteaseLyricReadScript =
+    r"""(function () { return JSON.stringify(window.__dshLyric || { status: 'none' }); })();""";
+
 /// 在官方页面上发起搜索（网易云使用 hash 路由）。
 String neteaseSearchScript(String query) {
   final encoded = Uri.encodeComponent(query);

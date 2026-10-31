@@ -24,6 +24,10 @@ class _AppShellState extends State<AppShell> {
   static const String _autoSearch =
       String.fromEnvironment('DSH_AUTO_SEARCH');
 
+  /// 调试开关：搜索完成后自动播放第一条结果（验证歌词与播放控制）。
+  static const bool _autoPlayFirst =
+      bool.fromEnvironment('DSH_AUTO_PLAY_FIRST');
+
   @override
   void initState() {
     super.initState();
@@ -33,10 +37,14 @@ class _AppShellState extends State<AppShell> {
         // 等官方页面就绪后再搜索。
         await Future<void>.delayed(const Duration(seconds: 6));
         if (!mounted) return;
-        await context.read<MusicController>().searchFor(_autoSearch);
+        final controller = context.read<MusicController>();
+        await controller.searchFor(_autoSearch);
         if (!mounted) return;
         // 验证模式下自动收起官方页面，确认结果渲染在我们自己的界面里。
         context.read<WebPlayerUi>().close();
+        if (_autoPlayFirst && controller.search.results.isNotEmpty) {
+          await controller.selectTrack(controller.search.results.first);
+        }
       });
     }
   }

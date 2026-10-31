@@ -263,6 +263,7 @@ class MusicController extends ChangeNotifier {
 
     final ok = await engine.playTrack(track);
     if (!ok) {
+      _webMode = false;
       _playback = _machine.block(
         _playback,
         BlockReason.notSupported,
@@ -281,6 +282,13 @@ class MusicController extends ChangeNotifier {
       activeService: MusicService.netease,
     );
     notifyListeners();
+
+    // 真实曲目歌词：从官方页面取 LRC（带时间戳），驱动逐行同步。
+    final source = track.sourceFor(MusicService.netease);
+    if (source != null) {
+      _lyrics = await engine.fetchLyrics(source.providerTrackId);
+      notifyListeners();
+    }
   }
 
   void _onWebEngineChanged() {

@@ -68,6 +68,7 @@ class _MusicAppState extends State<MusicApp> {
         providers: buildDemoProviders(),
         webEngine: _engine,
       );
+      _engine?.start();
       return;
     }
     _handle = WebPlayerHandle();
@@ -76,6 +77,7 @@ class _MusicAppState extends State<MusicApp> {
       providers: buildDemoProviders(),
       webEngine: _engine,
     );
+    _engine!.start();
     if (_autoOpenOfficial) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _ui.open();

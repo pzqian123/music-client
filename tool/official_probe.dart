@@ -122,6 +122,14 @@ class _ProbePageState extends State<ProbePage> {
         await _handle.seek(const Duration(seconds: 10));
         await _wait(1200);
         out['afterSeek10'] = await _handle.probeJson(mediaStateScript);
+
+        // 5) 歌词
+        await _handle.runScript(neteaseLyricFetchScript(trackId));
+        await _wait(1500);
+        final lyricRaw = await _handle.probeJson(neteaseLyricReadScript);
+        out['lyricStatus'] = lyricRaw.length > 400
+            ? '${lyricRaw.substring(0, 400)}…'
+            : lyricRaw;
       }
     } catch (error) {
       out['error'] = '$error';

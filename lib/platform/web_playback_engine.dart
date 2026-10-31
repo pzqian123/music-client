@@ -4,12 +4,15 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../domain/lyrics.dart';
 import '../domain/models.dart';
 import '../presentation/widgets/hidden_web_player.dart';
 import 'web_player_engine.dart';
+import 'web_player_scripts.dart';
 
 /// WebView 桥的最小接口，便于测试替换。
 abstract interface class WebPlayerBridge {
@@ -169,15 +172,29 @@ class WebPlaybackEngine extends ChangeNotifier {
     notifyListeners();
     try {
       await bridge.openTrack(target, source.providerTrackId);
-      await Future<void>.delayed(const Duration(milliseconds: 2600));
-      final clicked = await bridge.clickOfficialPlay();
-      if (clicked.startsWith('no-play-button') || clicked.startsWith('click-error')) {
-        _lastError = '官方页面未找到播放按钮';
-        return false;
+      await Future<void>.delayed(const Duration(milliseconds: 3200));
+
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final clicked = await bridge.clickOfficialPlay();
+        if (clicked.startsWith('click-error')) {
+          _lastError = '官方页面点击播放失败';
+          return false;
+        }
+        // 等真实元素就绪：拿到的必须是带时长的媒体元素。
+        for (var i = 0; i < 6; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 400));
+          await _poll();
+          if (_state.hasMedia &&
+              _state.duration.inMilliseconds > 0 &&
+              !_state.paused) {
+            return true;
+          }
+        }
       }
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-      await _poll();
-      return _state.hasMedia;
+      _lastError = _state.hasMedia
+          ? '官方页面未开始播放（可能是 VIP 或版权限制）'
+          : '官方页面未找到播放器元素';
+      return false;
     } catch (error) {
       _lastError = '$error';
       return false;
@@ -185,6 +202,42 @@ class WebPlaybackEngine extends ChangeNotifier {
       _busy = false;
       notifyListeners();
     }
+  }
+
+  /// 取歌词：在官方页面上下文里请求其自身的歌词接口，得到带时间戳的 LRC。
+  Future<LyricTimeline?> fetchLyrics(String songId) async {
+    if (songId.isEmpty) return null;
+    try {
+      await bridge.runScript(neteaseLyricFetchScript(songId));
+      for (var attempt = 0; attempt < 12; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        final raw = await bridge.runScript(neteaseLyricReadScript);
+        final decoded = _decode(raw);
+        if (decoded == null) continue;
+        final status = decoded['status'];
+        if (status == 'pending' || status == null) continue;
+        if (status != 'ok') return null;
+        final lrc = (decoded['lrc'] as String?) ?? '';
+        if (lrc.trim().isEmpty) return null;
+        final timeline = LyricTimeline.parseLrc(lrc);
+        return timeline.isEmpty ? null : timeline;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<String, dynamic>? _decode(String raw) {
+    final trimmed = raw.trim();
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {
+      // 忽略不完整 JSON，继续轮询。
+    }
+    return null;
   }
 
   Future<void> toggle() async {
