@@ -92,6 +92,54 @@ class _Harness {
 }
 
 void main() {
+  test('重复播放入队同一首歌不会产生重复条目', () async {
+    final harness = _Harness();
+    addTearDown(harness.controller.dispose);
+
+    await harness.controller.searchFor('夜空');
+    final track = harness.controller.search.results.first;
+
+    await harness.controller.selectTrack(track);
+    final queueLength = harness.controller.playback.queue.length;
+    await harness.controller.selectTrack(track);
+
+    expect(harness.controller.playback.queue.length, queueLength);
+    expect(
+      harness.controller.playback.queue.where((t) => t.id == track.id).length,
+      1,
+    );
+  });
+
+  test('enqueue 同一首歌只入队一次', () async {
+    final harness = _Harness();
+    addTearDown(harness.controller.dispose);
+
+    await harness.controller.searchFor('夜空');
+    final track = harness.controller.search.results.first;
+
+    harness.controller.enqueue(track);
+    harness.controller.enqueue(track);
+
+    expect(harness.controller.playback.queue.length, 1);
+  });
+
+  test('再次点击已在队列中的歌会跳到该曲目而不是追加', () async {
+    final harness = _Harness();
+    addTearDown(harness.controller.dispose);
+
+    await harness.controller.searchFor('夜空');
+    final results = harness.controller.search.results;
+    if (results.length < 2) return;
+
+    await harness.controller.selectTrack(results[0]);
+    await harness.controller.selectTrack(results[1]);
+    await harness.controller.selectTrack(results[0]);
+
+    expect(harness.controller.playback.queue.length, 2);
+    expect(harness.controller.playback.queueIndex, 0);
+    expect(harness.controller.playback.current?.id, results[0].id);
+  });
+
   test('搜索会合并两个服务的同曲', () async {
     final harness = _Harness();
     addTearDown(harness.controller.dispose);

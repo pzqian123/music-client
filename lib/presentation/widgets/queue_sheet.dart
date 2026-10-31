@@ -62,6 +62,7 @@ class QueuePanel extends StatelessWidget {
                         title: track.title,
                         accentColor: track.accentColor,
                         artworkUrl: track.artworkUrl,
+                        imageBytes: music.coverBytesFor(track),
                         size: 40,
                         radius: 8,
                       ),

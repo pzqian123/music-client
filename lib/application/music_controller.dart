@@ -299,6 +299,16 @@ class MusicController extends ChangeNotifier {
   }
 
   Future<void> selectTrack(Track track, {MusicService? service}) async {
+    // 队列去重：同一首已在队列里就跳过去，不再追加一条。
+    final existing =
+        _playback.queue.indexWhere((item) => item.id == track.id);
+    if (existing >= 0) {
+      _playback = _machine.playAt(_playback, existing);
+      notifyListeners();
+      await _playTrack(_playback.current ?? track, service: service);
+      return;
+    }
+
     _playback = _machine.enqueue(_playback, track);
     final index = _playback.queue.length - 1;
     _playback = _machine.playAt(_playback, index);
@@ -348,6 +358,19 @@ class MusicController extends ChangeNotifier {
     if (source != null) {
       _lyrics = await engine.fetchLyrics(source.providerTrackId);
       notifyListeners();
+
+      // 队列里的封面：播放到哪首就补哪首的字节（搜索结果只预抓了前 10 条）。
+      if (!_coverBytes.containsKey(source.providerTrackId) &&
+          (track.artworkUrl ?? '').isNotEmpty) {
+        final bytes = await engine.fetchCoverBytes([
+          {'id': source.providerTrackId, 'url': track.artworkUrl!},
+        ]);
+        final data = bytes[source.providerTrackId];
+        if (data != null && data.isNotEmpty) {
+          _coverBytes[source.providerTrackId] = Uint8List.fromList(data);
+          notifyListeners();
+        }
+      }
     }
   }
 
@@ -379,8 +402,12 @@ class MusicController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 仅加入队列，不改变当前播放。
+  /// 仅加入队列，不改变当前播放；已在队列中则忽略。
   void enqueue(Track track) {
+    if (_playback.queue.any((item) => item.id == track.id)) {
+      notifyListeners();
+      return;
+    }
     _playback = _machine.enqueue(_playback, track);
     notifyListeners();
   }

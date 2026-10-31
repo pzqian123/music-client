@@ -71,6 +71,10 @@ class AlbumArt extends StatelessWidget {
     final url = artworkUrl;
     if (url == null || url.isEmpty) return fallback;
 
+    // 网易云图床会按 UA 拦截直连请求（403），拿不到字节时直接用占位图，
+    // 不要再走网络加载，否则会显示"破图"标记。
+    if (url.contains('music.126.net')) return fallback;
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: Image.network(
