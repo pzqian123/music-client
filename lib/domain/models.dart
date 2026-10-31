@@ -167,6 +167,21 @@ class Track {
     return null;
   }
 
+  /// 只替换封面等展示字段，保持 id 与来源不变。
+  Track copyWith({String? artworkUrl, int? accentColor}) {
+    return Track(
+      id: id,
+      title: title,
+      artist: artist,
+      album: album,
+      duration: duration,
+      artworkUrl: artworkUrl ?? this.artworkUrl,
+      accentColor: accentColor ?? this.accentColor,
+      versionMarkers: versionMarkers,
+      sources: sources,
+    );
+  }
+
   /// 优先返回第一个可播放来源；全部不可播放时返回第一个来源；无来源时返回 null。
   TrackSource? get preferredSource {
     if (sources.isEmpty) return null;

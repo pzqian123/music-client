@@ -123,6 +123,7 @@ class _SearchPageState extends State<SearchPage> {
                             final track = search.results[index];
                             return TrackResultTile(
                               track: track,
+                              imageBytes: music.coverBytesFor(track),
                               onTap: () =>
                                   music.selectTrack(track),
                               onSelectSource: (service) =>

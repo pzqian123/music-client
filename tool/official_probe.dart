@@ -85,6 +85,14 @@ class _ProbePageState extends State<ProbePage> {
       out['search'] = await _handle.probeJson(neteaseParseSearchScript);
       setState(() => _status = '搜索完成，结果已记录');
 
+      // 搜索页上直接取封面（验证与播放无关的路径）
+      const probeIds = ['2652820720', '2668397359', '3439604863'];
+      await _handle.runScript(neteaseCoverFetchScript(probeIds));
+      await _wait(1800);
+      final coverRaw = await _handle.probeJson(neteaseCoverReadScript);
+      out['coverRaw'] =
+          coverRaw.length > 500 ? '${coverRaw.substring(0, 500)}…' : coverRaw;
+
       // 2) 播放控制：取第一条结果的 id，打开并播放
       final searchRaw = out['search'] as String? ?? '{}';
       final decoded = jsonDecode(searchRaw);
@@ -130,6 +138,14 @@ class _ProbePageState extends State<ProbePage> {
         out['lyricStatus'] = lyricRaw.length > 400
             ? '${lyricRaw.substring(0, 400)}…'
             : lyricRaw;
+
+        // 6) 封面
+        await _handle.runScript(neteaseCoverFetchScript([trackId]));
+        await _wait(1500);
+        final coverRaw = await _handle.probeJson(neteaseCoverReadScript);
+        out['coverRaw'] = coverRaw.length > 500
+            ? '${coverRaw.substring(0, 500)}…'
+            : coverRaw;
       }
     } catch (error) {
       out['error'] = '$error';

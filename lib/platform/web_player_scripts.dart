@@ -304,6 +304,95 @@ const String neteaseSearchDebugScript = r"""
 })();
 """;
 
+/// 在官方页面里抓取封面字节（返回 base64）。
+///
+/// 图床会按 UA/Referer 拦截非浏览器请求（Flutter 直连返回 403），
+/// 由官方页面自己去取最稳。
+String neteaseCoverBytesScript(List<Map<String, String>> items) {
+  final payload = items
+      .where((e) =>
+          RegExp(r'^\d+$').hasMatch(e['id'] ?? '') &&
+          (e['url'] ?? '').startsWith('http'))
+      .take(20)
+      .map((e) => '{"id":"${e['id']}","url":"${e['url']}"}')
+      .join(',');
+  return '''
+(function () {
+  window.__dshCoverBytes = { status: 'pending', items: [] };
+  var list = [$payload];
+  if (!list.length) { window.__dshCoverBytes = { status: 'ok', items: [] }; return 'empty'; }
+  var pending = list.length;
+  var results = [];
+  function done() {
+    pending = pending - 1;
+    if (pending <= 0) {
+      window.__dshCoverBytes = { status: 'ok', items: results };
+    }
+  }
+  list.forEach(function (item) {
+    try {
+      fetch(item.url, { credentials: 'omit' })
+        .then(function (r) { return r.blob(); })
+        .then(function (blob) {
+          var reader = new FileReader();
+          reader.onloadend = function () {
+            results.push({ id: item.id, data: String(reader.result || '') });
+            done();
+          };
+          reader.onerror = function () { done(); };
+          reader.readAsDataURL(blob);
+        })
+        .catch(function () { done(); });
+    } catch (e) { done(); }
+  });
+  return 'started';
+})();
+''';
+}
+
+/// 读取封面字节结果。
+const String neteaseCoverBytesReadScript =
+    r"""(function () { return JSON.stringify(window.__dshCoverBytes || { status: 'none' }); })();""";
+
+/// 批量取封面：官方详情接口返回 `songs[].al.picUrl`。
+String neteaseCoverFetchScript(List<String> songIds) {
+  final safe = songIds
+      .where((id) => RegExp(r'^\d+$').hasMatch(id))
+      .take(50)
+      .join(',');
+  return '''
+(function () {
+  window.__dshCover = { status: 'pending' };
+  if ('$safe' === '') { window.__dshCover = { status: 'ok', items: [] }; return 'empty'; }
+  try {
+    fetch('/api/song/detail?ids=[$safe]', { credentials: 'include' })
+      .then(function (response) { return response.json(); })
+      .then(function (data) {
+        var songs = (data && data.songs) || [];
+        var items = [];
+        for (var i = 0; i < songs.length; i++) {
+          var song = songs[i];
+          var album = song.al || song.album || {};
+          var pic = album.picUrl || '';
+          items.push({ id: String(song.id), pic: pic });
+        }
+        window.__dshCover = { status: 'ok', items: items };
+      })
+      .catch(function (error) {
+        window.__dshCover = { status: 'error', message: String(error) };
+      });
+  } catch (error) {
+    window.__dshCover = { status: 'error', message: String(error) };
+  }
+  return 'started';
+})();
+''';
+}
+
+/// 读取封面结果。
+const String neteaseCoverReadScript =
+    r"""(function () { return JSON.stringify(window.__dshCover || { status: 'none' }); })();""";
+
 /// 在官方页面上下文里取歌词（同源请求，自动带上页面自己的登录态）。
 ///
 /// 返回的 LRC 带时间戳，可驱动逐行同步；没有逐字时间戳时回退逐行。

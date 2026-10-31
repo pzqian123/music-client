@@ -17,12 +17,14 @@ class TrackResultTile extends StatelessWidget {
     required this.onTap,
     required this.onSelectSource,
     required this.onAddToQueue,
+    this.imageBytes,
   });
 
   final Track track;
   final VoidCallback onTap;
   final ValueChanged<MusicService> onSelectSource;
   final VoidCallback onAddToQueue;
+  final List<int>? imageBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +42,7 @@ class TrackResultTile extends StatelessWidget {
                 title: track.title,
                 accentColor: track.accentColor,
                 artworkUrl: track.artworkUrl,
+                imageBytes: imageBytes,
               ),
               const SizedBox(width: 12),
               Expanded(

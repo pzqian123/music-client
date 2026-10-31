@@ -204,6 +204,95 @@ class WebPlaybackEngine extends ChangeNotifier {
     }
   }
 
+  /// 通过官方页面抓取封面字节（绕过图床的 UA 拦截）。
+  Future<Map<String, List<int>>> fetchCoverBytes(
+    List<Map<String, String>> items,
+  ) async {
+    if (items.isEmpty) return const {};
+    try {
+      await bridge.runScript(neteaseCoverBytesScript(items));
+      for (var attempt = 0; attempt < 24; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        final raw = await bridge.runScript(neteaseCoverBytesReadScript);
+        final decoded = _decode(raw);
+        if (decoded == null) continue;
+        final status = decoded['status'];
+        if (status == 'pending') continue;
+        if (status != 'ok') return const {};
+        final list = decoded['items'];
+        if (list is! List) return const {};
+        final result = <String, List<int>>{};
+        for (final item in list) {
+          if (item is! Map<String, dynamic>) continue;
+          final id = item['id'];
+          final data = item['data'];
+          if (id is! String || data is! String) continue;
+          final comma = data.indexOf(',');
+          if (comma <= 0) continue;
+          try {
+            result[id] = base64Decode(data.substring(comma + 1));
+          } catch (_) {
+            // 单张失败不影响其余封面。
+          }
+        }
+        return result;
+      }
+      return const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// 取单曲封面（官方详情接口对批量 ids 支持不稳定，改为逐曲查询）。
+  Future<String?> fetchCover(String songId) async {
+    final covers = await _fetchCoversOnce([songId]);
+    return covers[songId];
+  }
+
+  /// 批量取封面地址（官方详情接口），返回 providerTrackId → 图片地址。
+  Future<Map<String, String>> fetchCovers(List<String> songIds) async {
+    if (songIds.isEmpty) return const {};
+    // 批量接口在部分情况下只返回一条，按每批 1 个查询保证准确性。
+    final result = <String, String>{};
+    for (final id in songIds.take(12)) {
+      final one = await _fetchCoversOnce([id]);
+      result.addAll(one);
+    }
+    return result;
+  }
+
+  Future<Map<String, String>> _fetchCoversOnce(List<String> songIds) async {
+    if (songIds.isEmpty) return const {};
+    try {
+      await bridge.runScript(neteaseCoverFetchScript(songIds));
+      for (var attempt = 0; attempt < 10; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 220));
+        final raw = await bridge.runScript(neteaseCoverReadScript);
+        final decoded = _decode(raw);
+        if (decoded == null) continue;
+        final status = decoded['status'];
+        if (status == 'pending') continue;
+        if (status != 'ok') return const {};
+        final items = decoded['items'];
+        if (items is! List) return const {};
+        final covers = <String, String>{};
+        for (final item in items) {
+          if (item is! Map<String, dynamic>) continue;
+          final id = item['id'];
+          final pic = item['pic'];
+          if (id is String && pic is String && pic.isNotEmpty) {
+            // 不要加 ?param= 后缀：本机网络下带参数的请求会失败。
+            covers[id] = pic;
+          }
+        }
+        return covers;
+      }
+      return const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
   /// 取歌词：在官方页面上下文里请求其自身的歌词接口，得到带时间戳的 LRC。
   Future<LyricTimeline?> fetchLyrics(String songId) async {
     if (songId.isEmpty) return null;

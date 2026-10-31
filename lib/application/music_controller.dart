@@ -91,6 +91,15 @@ class MusicController extends ChangeNotifier {
 
   final PlaybackMachine _machine = const PlaybackMachine();
 
+  /// 官方页面抓到的封面字节（按 providerTrackId 索引）。
+  final Map<String, List<int>> _coverBytes = {};
+
+  List<int>? coverBytesFor(Track track) {
+    final source = track.sourceFor(MusicService.netease);
+    if (source == null) return null;
+    return _coverBytes[source.providerTrackId];
+  }
+
   /// 当前播放是否由隐藏的官方网页驱动。
   bool _webMode = false;
 
@@ -160,10 +169,42 @@ class MusicController extends ChangeNotifier {
         if (seq != _searchSeq) return;
         stopwatch.stop();
         _usedOfficialSearch = true;
+
+        // 批量补封面（一次请求覆盖列表）。
+        final ids = tracks
+            .map((track) => track.sourceFor(MusicService.netease)?.providerTrackId)
+            .whereType<String>()
+            .toList();
+        final covers = await engine.fetchCovers(ids);
+        if (seq != _searchSeq) return;
+        final withCovers = [
+          for (final track in tracks)
+            covers[track.sourceFor(MusicService.netease)?.providerTrackId] == null
+                ? track
+                : track.copyWith(
+                    artworkUrl:
+                        covers[track.sourceFor(MusicService.netease)!.providerTrackId],
+                  ),
+        ];
+
+        // 由官方页面抓取前若干首的封面字节，规避图床的 UA 拦截。
+        final byteRequests = <Map<String, String>>[
+          for (final track in withCovers.take(10))
+            if (track.artworkUrl != null)
+              {
+                'id': track.sourceFor(MusicService.netease)?.providerTrackId ?? '',
+                'url': track.artworkUrl ?? '',
+              },
+        ]..removeWhere((item) => item['id']!.isEmpty);
+        if (byteRequests.isNotEmpty) {
+          _coverBytes.addAll(await engine.fetchCoverBytes(byteRequests));
+          if (seq != _searchSeq) return;
+        }
+
         _search = SearchState(
           query: trimmed,
           loading: false,
-          results: tracks,
+          results: withCovers,
           errors: const {},
           elapsed: stopwatch.elapsed,
         );

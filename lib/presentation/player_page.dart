@@ -98,6 +98,7 @@ class _LeftPanel extends StatelessWidget {
       title: track.title,
       accentColor: track.accentColor,
       artworkUrl: track.artworkUrl,
+      imageBytes: music.coverBytesFor(track),
       size: compact ? 96 : 240,
       radius: compact ? 12 : 20,
     );
