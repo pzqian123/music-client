@@ -239,35 +239,72 @@ class _LeftPanel extends StatelessWidget {
   }
 }
 
-class _Progress extends StatelessWidget {
+class _Progress extends StatefulWidget {
   const _Progress({required this.music});
 
   final MusicController music;
 
   @override
+  State<_Progress> createState() => _ProgressState();
+}
+
+class _ProgressState extends State<_Progress> {
+  double? _dragValue;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final playback = music.playback;
+    final playback = widget.music.playback;
     final duration = playback.current?.duration ?? Duration.zero;
-    final value = duration.inMilliseconds == 0
+    final live = duration.inMilliseconds <= 0
         ? 0.0
         : (playback.position.inMilliseconds / duration.inMilliseconds)
             .clamp(0.0, 1.0);
+    final value = _dragValue ?? live;
 
     return Column(
       children: [
-        LinearProgressIndicator(
-          value: value,
-          minHeight: 3,
-          backgroundColor: theme.dividerColor,
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 3,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+          ),
+          child: Slider(
+            key: const Key('playback-progress'),
+            value: value,
+            onChanged: duration.inMilliseconds <= 0
+                ? null
+                : (next) => setState(() => _dragValue = next),
+            onChangeEnd: duration.inMilliseconds <= 0
+                ? null
+                : (next) {
+                    final target = Duration(
+                      milliseconds:
+                          (next * duration.inMilliseconds).round(),
+                    );
+                    setState(() => _dragValue = null);
+                    widget.music.seekTo(target);
+                  },
+          ),
         ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            Text(formatDuration(playback.position), style: theme.textTheme.labelSmall),
-            const Spacer(),
-            Text(formatDuration(duration), style: theme.textTheme.labelSmall),
-          ],
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              Text(
+                formatDuration(_dragValue == null
+                    ? playback.position
+                    : Duration(
+                        milliseconds:
+                            (_dragValue! * duration.inMilliseconds).round(),
+                      )),
+                style: theme.textTheme.labelSmall,
+              ),
+              const Spacer(),
+              Text(formatDuration(duration), style: theme.textTheme.labelSmall),
+            ],
+          ),
         ),
       ],
     );

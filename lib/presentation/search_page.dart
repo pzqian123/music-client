@@ -42,7 +42,22 @@ class _SearchPageState extends State<SearchPage> {
               children: [
                 Text('搜索', style: theme.textTheme.headlineSmall),
                 const SizedBox(width: 12),
-                if (music.isDemo)
+                if (music.usedOfficialSearch)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: theme.colorScheme.primary),
+                    ),
+                    child: Text(
+                      '官方页面实时结果',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                  )
+                else if (music.isDemo)
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,

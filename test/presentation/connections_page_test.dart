@@ -7,9 +7,50 @@ import 'package:music_client/domain/models.dart';
 import 'package:music_client/platform/official_handoff.dart';
 import 'package:music_client/platform/secure_credentials.dart';
 import 'package:music_client/presentation/connections_page.dart';
+import 'package:music_client/platform/web_player_engine.dart';
+import 'package:music_client/platform/web_playback_engine.dart';
+import 'package:music_client/presentation/web_player_ui.dart';
+import 'package:music_client/presentation/widgets/hidden_web_player.dart';
 import 'package:music_client/providers/fake_netease_provider.dart';
 import 'package:music_client/providers/fake_spotify_provider.dart';
 import 'package:provider/provider.dart';
+
+/// 连接页需要的最小假桥接（不触碰真实 WebView）。
+class _FakeBridge implements WebPlayerBridge {
+  @override
+  bool get isAttached => false;
+
+  @override
+  Future<WebPlayerState> readState() async => const WebPlayerState.empty();
+
+  @override
+  Future<void> toggle() async {}
+
+  @override
+  Future<void> play() async {}
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<void> openTrack(WebPlayerTarget target, String id) async {}
+
+  @override
+  Future<String> clickOfficialPlay() async => 'no-play-button';
+
+  @override
+  Future<String> runScript(String source) async => '';
+
+  @override
+  Future<List<OfficialSearchResult>> searchNetease(
+    String query, {
+    Duration wait = const Duration(milliseconds: 0),
+  }) async =>
+      const [];
+}
 
 Future<void> runAsync(WidgetTester tester, Future<void> Function() action) async {
   var done = false;
@@ -53,8 +94,13 @@ class _Harness {
   late final MusicController controller;
 
   Widget build() {
-    return ChangeNotifierProvider<MusicController>.value(
-      value: controller,
+    final engine = WebPlaybackEngine(bridge: _FakeBridge());
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<MusicController>.value(value: controller),
+        ChangeNotifierProvider<WebPlayerUi>.value(value: WebPlayerUi()),
+        ChangeNotifierProvider<WebPlaybackEngine>.value(value: engine),
+      ],
       child: MaterialApp(
         theme: buildTheme(),
         home: const Scaffold(body: ConnectionsPage()),

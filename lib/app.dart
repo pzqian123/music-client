@@ -1,8 +1,14 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'application/music_controller.dart';
+import 'platform/web_playback_engine.dart';
 import 'presentation/app_shell.dart';
+import 'presentation/web_player_ui.dart';
+import 'presentation/widgets/hidden_web_player.dart';
 import 'providers/music_provider.dart';
 import 'providers/fake_netease_provider.dart';
 import 'providers/fake_spotify_provider.dart';
@@ -13,29 +19,97 @@ List<MusicProvider> buildDemoProviders() => [
       FakeNeteaseProvider(),
     ];
 
-class MusicApp extends StatelessWidget {
+/// 调试开关：启动即显示官方页面（仅用于自动化验证）。
+const bool _autoOpenOfficial =
+    bool.fromEnvironment('DSH_AUTO_OPEN_OFFICIAL');
+
+/// 测试环境（flutter test）不挂 WebView，避免缺少平台通道。
+bool get webPlayerSupported {
+  if (kIsWeb) return false;
+  if (!Platform.isWindows && !Platform.isAndroid) return false;
+  return Platform.environment['FLUTTER_TEST'] != 'true';
+}
+
+class MusicApp extends StatefulWidget {
   const MusicApp({super.key, this.controller});
 
-  /// 测试时可注入已构造的控制器。
+  /// 测试时可注入已构造的控制器；注入时不会创建 WebView。
   final MusicController? controller;
 
   @override
+  State<MusicApp> createState() => _MusicAppState();
+}
+
+class _MusicAppState extends State<MusicApp> {
+  late final WebPlayerHandle? _handle;
+  late final WebPlaybackEngine? _engine;
+  late final WebPlayerUi _ui;
+  MusicController? _ownedController;
+
+  MusicController get _controller =>
+      widget.controller ?? _ownedController!;
+
+  @override
+  void initState() {
+    super.initState();
+    _ui = WebPlayerUi();
+    if (widget.controller != null) {
+      // 注入控制器时（测试）不创建网页播放引擎。
+      _handle = null;
+      _engine = null;
+      _ownedController = widget.controller;
+      return;
+    }
+    if (!webPlayerSupported) {
+      // 不支持的平台：仍然创建引擎对象，只是不挂 WebView（状态显示"未挂载"）。
+      _handle = WebPlayerHandle();
+      _engine = WebPlaybackEngine(bridge: HandleWebPlayerBridge(_handle!));
+      _ownedController = MusicController(
+        providers: buildDemoProviders(),
+        webEngine: _engine,
+      );
+      return;
+    }
+    _handle = WebPlayerHandle();
+    _engine = WebPlaybackEngine(bridge: HandleWebPlayerBridge(_handle!));
+    _ownedController = MusicController(
+      providers: buildDemoProviders(),
+      webEngine: _engine,
+    );
+    if (_autoOpenOfficial) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _ui.open();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    if (widget.controller == null) {
+      _ownedController?.dispose();
+      _engine?.dispose();
+    }
+    _ui.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final injected = controller;
     final shell = MaterialApp(
       title: '音乐聚合',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       home: const AppShell(),
     );
-    if (injected != null) {
-      return ChangeNotifierProvider<MusicController>.value(
-        value: injected,
-        child: shell,
-      );
-    }
-    return ChangeNotifierProvider<MusicController>(
-      create: (_) => MusicController(providers: buildDemoProviders()),
+
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<MusicController>.value(value: _controller),
+        ChangeNotifierProvider<WebPlayerUi>.value(value: _ui),
+        if (_engine != null)
+          ChangeNotifierProvider<WebPlaybackEngine>.value(value: _engine),
+        if (_handle != null) Provider<WebPlayerHandle>.value(value: _handle),
+      ],
       child: shell,
     );
   }

@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../application/music_controller.dart';
 import '../domain/models.dart';
+import '../platform/web_playback_engine.dart';
 import '../providers/music_provider.dart';
+import 'web_player_ui.dart';
 import 'widgets/provider_status_banner.dart';
 
 class ConnectionsPage extends StatelessWidget {
@@ -25,6 +27,8 @@ class ConnectionsPage extends StatelessWidget {
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 16),
+          const _OfficialPlayerCard(),
+          const SizedBox(height: 12),
           for (final provider in music.providers) ...[
             _ProviderCard(music: music, provider: provider),
             const SizedBox(height: 12),
@@ -39,6 +43,69 @@ class ConnectionsPage extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _OfficialPlayerCard extends StatelessWidget {
+  const _OfficialPlayerCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final ui = context.watch<WebPlayerUi>();
+    final engine = context.watch<WebPlaybackEngine?>();
+    final state = engine?.state;
+
+    return Card(
+      key: const Key('official-player-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('官方网页播放器', style: theme.textTheme.titleMedium),
+                ),
+                Text(
+                  engine == null
+                      ? '不可用'
+                      : (engine.isAttached ? '已就绪' : '未挂载'),
+                  key: const Key('official-player-state'),
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '音频由官方页面输出，界面完全由本应用控制。首次使用请在这里登录（登录信息只存在本机）。',
+              style: theme.textTheme.bodySmall,
+            ),
+            if (state != null && state.hasMedia) ...[
+              const SizedBox(height: 8),
+              Text(
+                '当前：${state.nowPlaying.isEmpty ? "未知曲目" : state.nowPlaying} · '
+                '${state.paused ? "已暂停" : "播放中"}',
+                style: theme.textTheme.labelSmall,
+              ),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              children: [
+                FilledButton.icon(
+                  key: const Key('open-official-page'),
+                  onPressed: ui.open,
+                  icon: const Icon(Icons.login, size: 16),
+                  label: const Text('打开官方页面登录/切歌'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

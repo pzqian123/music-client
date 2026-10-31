@@ -11,6 +11,7 @@ import '../domain/models.dart';
 import '../domain/playback.dart';
 import '../platform/official_handoff.dart';
 import '../platform/secure_credentials.dart';
+import '../platform/web_playback_engine.dart';
 import '../providers/music_provider.dart';
 import 'playback_clock.dart';
 
@@ -68,6 +69,7 @@ class MusicController extends ChangeNotifier {
     PlaybackClock? clock,
     SecureCredentials? credentials,
     OfficialHandoff? handoff,
+    this.webEngine,
   })  : providers = List.unmodifiable(providers),
         _clock = clock ?? TimerClock(),
         _credentials = credentials ?? InMemoryCredentials(),
@@ -76,13 +78,23 @@ class MusicController extends ChangeNotifier {
       for (final provider in this.providers) provider.service: provider.snapshot,
     };
     _clockSubscription = _clock.positions.listen(_onClockTick);
+    webEngine?.addListener(_onWebEngineChanged);
   }
 
   final List<MusicProvider> providers;
   final PlaybackClock _clock;
   final SecureCredentials _credentials;
   final OfficialHandoff _handoff;
+
+  /// 网页播放引擎；为空或未就绪时退回演示播放。
+  final WebPlaybackEngine? webEngine;
+
   final PlaybackMachine _machine = const PlaybackMachine();
+
+  /// 当前播放是否由隐藏的官方网页驱动。
+  bool _webMode = false;
+
+  bool get usesWebPlayer => _webMode && (webEngine?.isAttached ?? false);
 
   StreamSubscription<Duration>? _clockSubscription;
 
@@ -104,6 +116,11 @@ class MusicController extends ChangeNotifier {
   Map<MusicService, ProviderSnapshot> get providerStates => _providerStates;
 
   bool get isDemo => providers.isNotEmpty && providers.first.isDemo;
+
+  /// 最近一次搜索是否来自官方页面（真实数据）。
+  bool get usedOfficialSearch => _usedOfficialSearch;
+
+  bool _usedOfficialSearch = false;
 
   ProviderSnapshot? snapshotOf(MusicService service) => _providerStates[service];
 
@@ -134,6 +151,43 @@ class MusicController extends ChangeNotifier {
     notifyListeners();
 
     final stopwatch = Stopwatch()..start();
+
+    // 网页播放引擎可用时，搜索直接解析官方结果（真实数据）。
+    final engine = webEngine;
+    if (engine != null && engine.isAttached) {
+      try {
+        final tracks = await engine.searchNetease(trimmed);
+        if (seq != _searchSeq) return;
+        stopwatch.stop();
+        _usedOfficialSearch = true;
+        _search = SearchState(
+          query: trimmed,
+          loading: false,
+          results: tracks,
+          errors: const {},
+          elapsed: stopwatch.elapsed,
+        );
+        notifyListeners();
+        return;
+      } catch (error) {
+        if (seq != _searchSeq) return;
+        _search = SearchState(
+          query: trimmed,
+          loading: false,
+          results: const [],
+          errors: {
+            MusicService.netease: ProviderError(
+              service: MusicService.netease,
+              message: '官方页面搜索失败：$error',
+            ),
+          },
+          elapsed: stopwatch.elapsed,
+        );
+        notifyListeners();
+        return;
+      }
+    }
+
     final futures = providers.map((provider) async {
       try {
         final tracks = await provider.search(trimmed);
@@ -185,7 +239,76 @@ class MusicController extends ChangeNotifier {
     notifyListeners();
 
     final target = service ?? track.preferredSource?.service;
+
+    // 网易云曲目且网页播放引擎可用 → 交给隐藏的官方页面播放。
+    if (track.sourceFor(MusicService.netease) != null &&
+        (webEngine?.isAttached ?? false) &&
+        (target == null || target == MusicService.netease)) {
+      await _playViaWeb(track);
+      return;
+    }
+
     await _startPlayback(track, target, resetPosition: true);
+  }
+
+  Future<void> _playViaWeb(Track track) async {
+    final engine = webEngine;
+    if (engine == null) return;
+    _webMode = true;
+    _playback = _playback.copyWith(
+      status: PlaybackStatus.loading,
+      activeService: MusicService.netease,
+    );
+    notifyListeners();
+
+    final ok = await engine.playTrack(track);
+    if (!ok) {
+      _playback = _machine.block(
+        _playback,
+        BlockReason.notSupported,
+        engine.lastError ?? '官方页面未能开始播放，请先在「连接」页登录',
+      );
+      notifyListeners();
+      return;
+    }
+    _playback = PlaybackState(
+      queue: _playback.queue,
+      queueIndex: _playback.queueIndex,
+      position: engine.state.position,
+      status: engine.state.paused
+          ? PlaybackStatus.paused
+          : PlaybackStatus.playing,
+      activeService: MusicService.netease,
+    );
+    notifyListeners();
+  }
+
+  void _onWebEngineChanged() {
+    if (!_webMode) return;
+    final state = webEngine?.state;
+    if (state == null || !state.hasMedia) return;
+    final nextStatus = _playback.status == PlaybackStatus.loading
+        ? (state.paused ? PlaybackStatus.paused : PlaybackStatus.playing)
+        : (state.paused ? PlaybackStatus.paused : PlaybackStatus.playing);
+    _playback = _playback.copyWith(
+      position: state.position,
+      status: nextStatus,
+    );
+    notifyListeners();
+  }
+
+  /// 拖动进度（网页播放模式下真实生效）。
+  Future<void> seekTo(Duration position) async {
+    final engine = webEngine;
+    if (_webMode && engine != null) {
+      _playback = _playback.copyWith(position: position);
+      notifyListeners();
+      await engine.seek(position);
+      return;
+    }
+    _clock.seek(position);
+    _playback = _playback.copyWith(position: position);
+    notifyListeners();
   }
 
   /// 仅加入队列，不改变当前播放。
@@ -305,6 +428,12 @@ class MusicController extends ChangeNotifier {
     final current = _playback.current;
     if (current == null) return;
 
+    // 网页播放模式：直接操作隐藏的官方页面。
+    if (_webMode && (webEngine?.isAttached ?? false)) {
+      await webEngine!.toggle();
+      return;
+    }
+
     switch (_playback.status) {
       case PlaybackStatus.playing:
         _playback = _machine.pause(_playback);
@@ -407,6 +536,7 @@ class MusicController extends ChangeNotifier {
 
   @override
   void dispose() {
+    webEngine?.removeListener(_onWebEngineChanged);
     _clockSubscription?.cancel();
     unawaited(_clock.dispose());
     super.dispose();
