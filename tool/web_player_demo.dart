@@ -41,6 +41,9 @@ class _DemoPageState extends State<DemoPage> {
   }
   Timer? _poll;
   final TextEditingController _idController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  List<OfficialSearchResult> _results = const [];
+  bool _searching = false;
 
   @override
   void initState() {
@@ -62,10 +65,32 @@ class _DemoPageState extends State<DemoPage> {
     });
   }
 
+  Future<void> _search() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty || _searching) return;
+    setState(() => _searching = true);
+    final results = await _handle.searchNetease(query);
+    if (!mounted) return;
+    setState(() {
+      _results = results;
+      _searching = false;
+      _covered = false;
+    });
+  }
+
+  Future<void> _playResult(OfficialSearchResult result) async {
+    await _handle.openTrack(_target, result.id);
+    await Future<void>.delayed(const Duration(milliseconds: 2600));
+    await _handle.clickOfficialPlay();
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    await _refresh();
+  }
+
   @override
   void dispose() {
     _poll?.cancel();
     _idController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -136,6 +161,49 @@ class _DemoPageState extends State<DemoPage> {
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: '在官方页面搜索（网易云）',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => _search(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _searching ? null : _search,
+                  child: Text(_searching ? '搜索中…' : '官方搜索'),
+                ),
+              ],
+            ),
+          ),
+          if (_results.isNotEmpty)
+            SizedBox(
+              height: 66,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                itemCount: _results.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final result = _results[index];
+                  return ActionChip(
+                    label: Text(
+                      '${result.title} · ${result.artist}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    onPressed: () => _playResult(result),
+                  );
+                },
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Align(

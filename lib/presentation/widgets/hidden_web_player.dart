@@ -29,6 +29,13 @@ class WebPlayerHandle {
     return result?.toString();
   }
 
+  /// 执行任意脚本并返回结果（诊断用）。
+  Future<String> runScript(String source) async =>
+      await _js(source) ?? '';
+
+  /// 执行返回 JSON 的脚本。
+  Future<String> probeJson(String source) async => await _js(source) ?? '{}';
+
   Future<void> openHome(WebPlayerTarget target) async {
     await _controller?.loadUrl(
       urlRequest: URLRequest(url: WebUri(target.homeUrl)),
@@ -79,8 +86,70 @@ class WebPlayerHandle {
     await _js(mediaSeekScript(position.inMilliseconds / 1000));
   }
 
+  /// 点击官方页面上的播放按钮（新打开的曲目页需要它才起播）。
+  Future<String> clickOfficialPlay() async =>
+      await runScript(neteaseClickPlayScript);
+
+  /// 在官方页面上搜索，并返回解析后的结果（网易云）。
+  Future<List<OfficialSearchResult>> searchNetease(
+    String query, {
+    Duration wait = const Duration(milliseconds: 2600),
+  }) async {
+    await runScript(neteaseSearchScript(query));
+    await Future<void>.delayed(wait);
+    final raw = await probeJson(neteaseParseSearchScript);
+    return parseOfficialSearch(raw);
+  }
+
   Future<void> setVolume(double volume) async {
     await _js(mediaVolumeScript(volume));
+  }
+}
+
+/// 官方搜索结果条目。
+class OfficialSearchResult {
+  final String id;
+  final String title;
+  final String artist;
+  final String duration;
+
+  const OfficialSearchResult({
+    required this.id,
+    required this.title,
+    required this.artist,
+    this.duration = '',
+  });
+}
+
+/// 解析官方搜索脚本返回的 JSON。
+List<OfficialSearchResult> parseOfficialSearch(String raw) {
+  final trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return const [];
+  try {
+    final decoded = jsonDecode(trimmed);
+    if (decoded is! Map<String, dynamic>) return const [];
+    final items = decoded['items'];
+    if (items is! List) return const [];
+    final results = <OfficialSearchResult>[];
+    for (final item in items) {
+      if (item is! Map<String, dynamic>) continue;
+      final id = item['id'];
+      final title = item['title'];
+      if (id is! String || id.isEmpty || title is! String || title.isEmpty) {
+        continue;
+      }
+      results.add(
+        OfficialSearchResult(
+          id: id,
+          title: title,
+          artist: (item['artist'] as String?) ?? '',
+          duration: (item['duration'] as String?) ?? '',
+        ),
+      );
+    }
+    return results;
+  } catch (_) {
+    return const [];
   }
 }
 
