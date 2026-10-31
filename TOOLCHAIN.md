@@ -56,6 +56,28 @@ licenses: All SDK package licenses accepted
 
 ## 验证结论
 
-- Windows：**待解除 Developer Mode 后复验**。
-- Android：见 `flutter build apk --debug` 结果（首次构建需下载 Gradle 与依赖）。
-- 测试：`flutter analyze` 0 issue；`flutter test` 全部通过（107 个用例）。
+| 目标 | 状态 | 证据 |
+| --- | --- | --- |
+| 静态检查 | ✅ | `flutter analyze` → No issues found |
+| 测试 | ✅ | `flutter test` → 119 passed |
+| Android APK | ✅ | `build/app/outputs/flutter-apk/app-debug.apk`（152 MB，debug，含全部 ABI） |
+| Web 预览（仅用于看界面） | ✅ | `build/web` + `tools/serve_web.js`，截图见 `docs/screenshots/` |
+| Windows 桌面 | ⏳ 阻塞 | `Building with plugins requires symlink support`，需开启「开发人员模式」 |
+
+Android 首次构建踩到的坑（已修复并写入 `android/gradle.properties`）：
+
+- Kotlin 增量编译在「插件源码在 C: 盘 pub 缓存、工程在 D: 盘」时报
+  `this and base files have different roots` 并卡住 → `kotlin.incremental=false`。
+- 默认 30s 网络超时对不可达仓库不够快 → 调成 15s 连接/读超时。
+- AGP 9 构建需要 CMake 3.22.1，构建时自动安装到 Android SDK。
+
+## Web 预览用法
+
+```powershell
+flutter build web --release -t tool/preview_main.dart   # 预览入口：直接渲染播放页
+node tools/serve_web.js 8099 build/web                  # http://127.0.0.1:8099/?view=split
+                                                        # http://127.0.0.1:8099/?view=immersive
+```
+
+`tool/preview_main.dart` 只用于视觉验证，不进入产品入口 `lib/main.dart`。
+
