@@ -24,6 +24,8 @@ abstract interface class WebPlayerBridge {
   Future<void> seek(Duration position);
   Future<void> openTrack(WebPlayerTarget target, String providerTrackId);
   Future<String> clickOfficialPlay();
+  Future<String> clickSongPagePlay();
+  Future<String> pageTitle();
   Future<String> runScript(String source);
   Future<List<OfficialSearchResult>> searchNetease(
     String query, {
@@ -61,6 +63,12 @@ class HandleWebPlayerBridge implements WebPlayerBridge {
 
   @override
   Future<String> clickOfficialPlay() => handle.clickOfficialPlay();
+
+  @override
+  Future<String> clickSongPagePlay() => handle.clickSongPagePlay();
+
+  @override
+  Future<String> pageTitle() => handle.pageTitle();
 
   @override
   Future<String> runScript(String source) => handle.runScript(source);
@@ -164,6 +172,9 @@ class WebPlaybackEngine extends ChangeNotifier {
   }
 
   /// 打开曲目页并点击官方播放按钮，返回是否成功起播。
+  ///
+  /// 关键点：只点歌曲页自己的播放按钮；如果页面还没渲染出来就继续等，
+  /// 绝不回退到播放栏的播放键（那会变成"继续上一首"）。
   Future<bool> playTrack(Track track) async {
     final source = track.sourceFor(service);
     if (source == null) return false;
@@ -172,28 +183,48 @@ class WebPlaybackEngine extends ChangeNotifier {
     notifyListeners();
     try {
       await bridge.openTrack(target, source.providerTrackId);
-      await Future<void>.delayed(const Duration(milliseconds: 3200));
 
-      for (var attempt = 0; attempt < 3; attempt++) {
-        final clicked = await bridge.clickOfficialPlay();
-        if (clicked.startsWith('click-error')) {
+      var clicked = false;
+      for (var attempt = 0; attempt < 16; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final result = await bridge.clickSongPagePlay();
+        if (result.startsWith('click-error')) {
           _lastError = '官方页面点击播放失败';
           return false;
         }
-        // 等真实元素就绪：拿到的必须是带时长的媒体元素。
-        for (var i = 0; i < 6; i++) {
+        if (result == 'clicked') {
+          clicked = true;
+          break;
+        }
+        // 页面还在加载，继续等。
+      }
+
+      if (!clicked) {
+        _lastError = '官方歌曲页没有加载出播放按钮';
+        return false;
+      }
+
+      // 等真实元素起播，并确认放的是目标曲目（标题匹配）而不是上一首。
+      final expected = _normalize(track.title);
+      for (var attempt = 0; attempt < 3; attempt++) {
+        for (var i = 0; i < 5; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 400));
           await _poll();
-          if (_state.hasMedia &&
-              _state.duration.inMilliseconds > 0 &&
-              !_state.paused) {
-            return true;
+          if (!_state.hasMedia || _state.duration.inMilliseconds == 0) continue;
+          final playing = !_state.paused;
+          final matches = _titleMatches(_state.nowPlaying, expected);
+          if (playing && matches) return true;
+          if (playing && !matches && _state.nowPlaying.isNotEmpty) {
+            // 放的是别的歌：再点一次歌曲页按钮。
+            break;
           }
         }
+        await bridge.clickSongPagePlay();
       }
-      _lastError = _state.hasMedia
-          ? '官方页面未开始播放（可能是 VIP 或版权限制）'
-          : '官方页面未找到播放器元素';
+
+      _lastError = _state.hasMedia && _state.nowPlaying.isNotEmpty
+          ? '官方页面播放的是「${_state.nowPlaying}」，不是目标曲目'
+          : '官方页面未开始播放（可能是 VIP 或版权限制）';
       return false;
     } catch (error) {
       _lastError = '$error';
@@ -202,6 +233,19 @@ class WebPlaybackEngine extends ChangeNotifier {
       _busy = false;
       notifyListeners();
     }
+  }
+
+  static String _normalize(String value) =>
+      value.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+
+  static bool _titleMatches(String nowPlaying, String expected) {
+    if (nowPlaying.isEmpty) return false;
+    final actual = _normalize(nowPlaying);
+    if (actual.isEmpty) return false;
+    if (actual.contains(expected) || expected.contains(actual)) return true;
+    // 标题常带括号后缀（如「晴天(深情版)」），比较前缀即可。
+    final short = expected.length >= 6 ? expected.substring(0, 6) : expected;
+    return actual.contains(short);
   }
 
   /// 通过官方页面抓取封面字节（绕过图床的 UA 拦截）。

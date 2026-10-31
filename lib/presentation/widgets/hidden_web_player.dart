@@ -90,6 +90,13 @@ class WebPlayerHandle {
   Future<String> clickOfficialPlay() async =>
       await runScript(neteaseClickPlayScript);
 
+  /// 只点歌曲页自己的播放按钮（不会误触播放栏的"继续上一首"）。
+  Future<String> clickSongPagePlay() async =>
+      await runScript(neteaseSongPagePlayScript);
+
+  /// 当前页面标题，用于判断是否已切到目标曲目。
+  Future<String> pageTitle() async => await runScript(pageTitleScript);
+
   /// 在官方页面上搜索，并返回解析后的结果（网易云）。
   Future<List<OfficialSearchResult>> searchNetease(
     String query, {

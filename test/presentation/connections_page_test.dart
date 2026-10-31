@@ -42,6 +42,12 @@ class _FakeBridge implements WebPlayerBridge {
   Future<String> clickOfficialPlay() async => 'no-play-button';
 
   @override
+  Future<String> clickSongPagePlay() async => 'no-play-button';
+
+  @override
+  Future<String> pageTitle() async => '';
+
+  @override
   Future<String> runScript(String source) async => '';
 
   @override

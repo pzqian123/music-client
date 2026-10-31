@@ -206,6 +206,25 @@ String mediaVolumeScript(double volume) {
 ''';
 }
 
+/// 只点「歌曲页自己的播放按钮」。
+///
+/// 关键：绝不能回退到播放栏的播放键——那是"继续上一首"，
+/// 会导致点新歌却在放旧歌。
+const String neteaseSongPagePlayScript = r"""
+(function () {
+  var frame = document.querySelector('#g_iframe');
+  var doc = frame && frame.contentDocument ? frame.contentDocument : document;
+  var node = doc.querySelector('a.u-btni-addply') || doc.querySelector('.u-btni-addply');
+  if (!node) { return 'no-play-button'; }
+  try { node.click(); } catch (e) { return 'click-error:' + e; }
+  return 'clicked';
+})();
+""";
+
+/// 读取当前歌曲页标题，用于确认页面已切到目标曲目。
+const String pageTitleScript =
+    r"""(function () { return document.title || ''; })();""";
+
 /// 点击官方页面上的「播放」按钮（歌曲页 / 播放栏），用于真正起播。
 const String neteaseClickPlayScript = r"""
 (function () {

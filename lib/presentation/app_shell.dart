@@ -28,6 +28,14 @@ class _AppShellState extends State<AppShell> {
   static const bool _autoPlayFirst =
       bool.fromEnvironment('DSH_AUTO_PLAY_FIRST');
 
+  /// 调试开关：播放完成后再切到第二条结果，验证切歌。
+  static const bool _autoPlaySecond =
+      bool.fromEnvironment('DSH_AUTO_PLAY_SECOND');
+
+  /// 调试开关：播放后自动进入沉浸模式，验证不会中断播放。
+  static const bool _autoImmersive =
+      bool.fromEnvironment('DSH_AUTO_IMMERSIVE');
+
   @override
   void initState() {
     super.initState();
@@ -42,8 +50,19 @@ class _AppShellState extends State<AppShell> {
         if (!mounted) return;
         // 验证模式下自动收起官方页面，确认结果渲染在我们自己的界面里。
         context.read<WebPlayerUi>().close();
-        if (_autoPlayFirst && controller.search.results.isNotEmpty) {
-          await controller.selectTrack(controller.search.results.first);
+        if (!_autoPlayFirst || controller.search.results.isEmpty) return;
+
+        await controller.selectTrack(controller.search.results.first);
+        if (!mounted) return;
+
+        if (_autoImmersive) {
+          controller.toggleImmersive();
+        }
+
+        if (_autoPlaySecond && controller.search.results.length > 1) {
+          await Future<void>.delayed(const Duration(seconds: 12));
+          if (!mounted) return;
+          await controller.selectTrack(controller.search.results[1]);
         }
       });
     }
@@ -73,9 +92,7 @@ class _AppShellState extends State<AppShell> {
       (controller) => controller.playback.current != null,
     );
 
-    if (viewMode == ViewMode.immersive && hasTrack) {
-      return const ImmersiveLyricsPage();
-    }
+    final immersive = viewMode == ViewMode.immersive && hasTrack;
 
     final ui = context.watch<WebPlayerUi>();
     final handle = context.read<WebPlayerHandle?>();
@@ -124,9 +141,12 @@ class _AppShellState extends State<AppShell> {
             ),
           );
 
-    if (handle == null) return app;
+    if (handle == null) {
+      return immersive ? const ImmersiveLyricsPage() : app;
+    }
 
     // 官方页面永远在最底层：平时被应用界面盖住，登录时才翻到最上面。
+    // 注意：沉浸模式下也必须保留这个 Stack，否则 WebView 被卸载 → 音频停止。
     return Stack(
       children: [
         if (ui.isMounted)
@@ -137,7 +157,10 @@ class _AppShellState extends State<AppShell> {
               onLoaded: () {},
             ),
           ),
-        if (!ui.isShowing) Positioned.fill(child: app),
+        if (!ui.isShowing)
+          Positioned.fill(
+            child: immersive ? const ImmersiveLyricsPage() : app,
+          ),
         if (ui.isShowing) _OfficialPageBar(onClose: ui.close),
       ],
     );
