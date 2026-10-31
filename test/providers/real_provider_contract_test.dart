@@ -45,7 +45,7 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: InMemoryCredentials(),
-        fetcher: (uri, {headers}) async => const HttpResponse(200, '{}'),
+        fetcher: (uri, {headers, body, contentType}) async => const HttpResponse(200, '{}'),
       );
       expect(
         () => provider.search('夜空'),
@@ -67,7 +67,7 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: credentials,
-        fetcher: (uri, {headers}) async {
+        fetcher: (uri, {headers, body, contentType}) async {
           requested = uri;
           expect(headers?['Authorization'], 'Bearer token');
           return const HttpResponse(200, _searchJson);
@@ -90,7 +90,7 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: credentials,
-        fetcher: (uri, {headers}) async => const HttpResponse(401, '{}'),
+        fetcher: (uri, {headers, body, contentType}) async => const HttpResponse(401, '{}'),
       );
 
       await expectLater(provider.search('x'), throwsA(isA<ProviderException>()));
@@ -103,7 +103,7 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: credentials,
-        fetcher: (uri, {headers}) async => const HttpResponse(429, '{}'),
+        fetcher: (uri, {headers, body, contentType}) async => const HttpResponse(429, '{}'),
       );
 
       expect(
@@ -123,7 +123,7 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: InMemoryCredentials(),
-        fetcher: (uri, {headers}) async {
+        fetcher: (uri, {headers, body, contentType}) async {
           called = true;
           return const HttpResponse(200, '{}');
         },
