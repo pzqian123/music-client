@@ -278,23 +278,32 @@ class MusicController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 曲目是否有可用的网易云来源且隐藏播放器就绪。
+  bool _canPlayThroughWeb(Track track, MusicService? service) {
+    if (!(webEngine?.isAttached ?? false)) return false;
+    if (track.sourceFor(MusicService.netease) == null) return false;
+    return service == null || service == MusicService.netease;
+  }
+
+  /// 播放入口：统一决定走隐藏的官方页面还是演示播放。
+  Future<void> _playTrack(Track track, {MusicService? service}) async {
+    if (_canPlayThroughWeb(track, service)) {
+      await _playViaWeb(track);
+      return;
+    }
+    await _startPlayback(
+      track,
+      service ?? track.preferredSource?.service,
+      resetPosition: true,
+    );
+  }
+
   Future<void> selectTrack(Track track, {MusicService? service}) async {
     _playback = _machine.enqueue(_playback, track);
     final index = _playback.queue.length - 1;
     _playback = _machine.playAt(_playback, index);
     notifyListeners();
-
-    final target = service ?? track.preferredSource?.service;
-
-    // 网易云曲目且网页播放引擎可用 → 交给隐藏的官方页面播放。
-    if (track.sourceFor(MusicService.netease) != null &&
-        (webEngine?.isAttached ?? false) &&
-        (target == null || target == MusicService.netease)) {
-      await _playViaWeb(track);
-      return;
-    }
-
-    await _startPlayback(track, target, resetPosition: true);
+    await _playTrack(track, service: service);
   }
 
   Future<void> _playViaWeb(Track track) async {
@@ -382,14 +391,11 @@ class MusicController extends ChangeNotifier {
     final track = _playback.queue[index];
     _playback = _machine.playAt(_playback, index);
     notifyListeners();
-    await _startPlayback(
-      track,
-      track.preferredSource?.service,
-      resetPosition: true,
-    );
+    await _playTrack(track);
   }
 
-  Future<void> switchSource(MusicService service) async {    final track = _playback.current;
+  Future<void> switchSource(MusicService service) async {
+    final track = _playback.current;
     if (track == null) return;
     if (track.sourceFor(service) == null) return;
     final position = _playback.position;
@@ -524,11 +530,7 @@ class MusicController extends ChangeNotifier {
     final target = _playback.queue[_playback.queueIndex + 1];
     _playback = _machine.next(_playback);
     notifyListeners();
-    await _startPlayback(
-      target,
-      target.preferredSource?.service,
-      resetPosition: true,
-    );
+    await _playTrack(target);
   }
 
   Future<void> previous() async {
@@ -540,17 +542,17 @@ class MusicController extends ChangeNotifier {
     if (track == null) return;
 
     if (_playback.queueIndex == beforeIndex && _playback.position == Duration.zero && wasPlaying) {
-      // 只是回到本曲开头
-      _clock.seek(Duration.zero);
+      // 只是回到本曲开头：网页播放模式下要真正 seek 回 0。
+      if (_webMode && (webEngine?.isAttached ?? false)) {
+        await webEngine!.seek(Duration.zero);
+      } else {
+        _clock.seek(Duration.zero);
+      }
       notifyListeners();
       return;
     }
     notifyListeners();
-    await _startPlayback(
-      track,
-      track.preferredSource?.service,
-      resetPosition: true,
-    );
+    await _playTrack(track);
   }
 
   void toggleImmersive() {
