@@ -1,0 +1,414 @@
+/// 应用唯一状态源：搜索、队列、播放、歌词、视图模式都从这里读。
+library;
+
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
+import '../domain/dedupe.dart';
+import '../domain/lyrics.dart';
+import '../domain/models.dart';
+import '../domain/playback.dart';
+import '../platform/official_handoff.dart';
+import '../platform/secure_credentials.dart';
+import '../providers/music_provider.dart';
+import 'playback_clock.dart';
+
+enum ViewMode { split, immersive }
+
+class ProviderError {
+  final MusicService service;
+  final String message;
+  final bool retryable;
+
+  const ProviderError({
+    required this.service,
+    required this.message,
+    this.retryable = true,
+  });
+}
+
+class SearchState {
+  final String query;
+  final bool loading;
+  final List<Track> results;
+  final Map<MusicService, ProviderError> errors;
+  final Duration? elapsed;
+
+  const SearchState({
+    this.query = '',
+    this.loading = false,
+    this.results = const [],
+    this.errors = const {},
+    this.elapsed,
+  });
+
+  bool get isEmptyResult => !loading && results.isEmpty;
+
+  SearchState copyWith({
+    String? query,
+    bool? loading,
+    List<Track>? results,
+    Map<MusicService, ProviderError>? errors,
+    Duration? elapsed,
+  }) {
+    return SearchState(
+      query: query ?? this.query,
+      loading: loading ?? this.loading,
+      results: results ?? this.results,
+      errors: errors ?? this.errors,
+      elapsed: elapsed ?? this.elapsed,
+    );
+  }
+}
+
+class MusicController extends ChangeNotifier {
+  MusicController({
+    required List<MusicProvider> providers,
+    PlaybackClock? clock,
+    SecureCredentials? credentials,
+    OfficialHandoff? handoff,
+  })  : providers = List.unmodifiable(providers),
+        _clock = clock ?? TimerClock(),
+        _credentials = credentials ?? InMemoryCredentials(),
+        _handoff = handoff ?? const UrlLauncherHandoff() {
+    _providerStates = {
+      for (final provider in this.providers) provider.service: provider.snapshot,
+    };
+    _clockSubscription = _clock.positions.listen(_onClockTick);
+  }
+
+  final List<MusicProvider> providers;
+  final PlaybackClock _clock;
+  final SecureCredentials _credentials;
+  final OfficialHandoff _handoff;
+  final PlaybackMachine _machine = const PlaybackMachine();
+
+  StreamSubscription<Duration>? _clockSubscription;
+
+  SearchState _search = const SearchState();
+  PlaybackState _playback = const PlaybackState.idle();
+  LyricTimeline? _lyrics;
+  ViewMode _viewMode = ViewMode.split;
+  Map<MusicService, ProviderSnapshot> _providerStates = const {};
+  int _searchSeq = 0;
+
+  SearchState get search => _search;
+
+  PlaybackState get playback => _playback;
+
+  LyricTimeline? get lyrics => _lyrics;
+
+  ViewMode get viewMode => _viewMode;
+
+  Map<MusicService, ProviderSnapshot> get providerStates => _providerStates;
+
+  bool get isDemo => providers.isNotEmpty && providers.first.isDemo;
+
+  ProviderSnapshot? snapshotOf(MusicService service) => _providerStates[service];
+
+  MusicProvider? _providerFor(MusicService? service) {
+    if (service == null) return null;
+    for (final provider in providers) {
+      if (provider.service == service) return provider;
+    }
+    return null;
+  }
+
+  void _refreshProviderStates() {
+    _providerStates = {
+      for (final provider in providers) provider.service: provider.snapshot,
+    };
+  }
+
+  Future<void> searchFor(String query) async {
+    final trimmed = query.trim();
+    final seq = ++_searchSeq;
+    if (trimmed.isEmpty) {
+      _search = const SearchState();
+      notifyListeners();
+      return;
+    }
+
+    _search = _search.copyWith(query: trimmed, loading: true, errors: const {});
+    notifyListeners();
+
+    final stopwatch = Stopwatch()..start();
+    final futures = providers.map((provider) async {
+      try {
+        final tracks = await provider.search(trimmed);
+        return MapEntry<MusicService, Object>(provider.service, tracks);
+      } catch (error) {
+        return MapEntry<MusicService, Object>(provider.service, error);
+      }
+    }).toList();
+
+    final responses = await Future.wait(futures);
+    if (seq != _searchSeq) return; // 竞态保护：丢弃过期结果
+
+    final collected = <ProviderTrack>[];
+    final errors = <MusicService, ProviderError>{};
+    for (final response in responses) {
+      final value = response.value;
+      if (value is List<ProviderTrack>) {
+        collected.addAll(value);
+      } else if (value is ProviderException) {
+        errors[response.key] = ProviderError(
+          service: response.key,
+          message: value.message,
+        );
+      } else {
+        errors[response.key] = ProviderError(
+          service: response.key,
+          message: '加载失败，请重试',
+        );
+      }
+    }
+    stopwatch.stop();
+
+    final merged = mergeProviderTracks(collected);
+    _search = SearchState(
+      query: trimmed,
+      loading: false,
+      results: merged.tracks,
+      errors: errors,
+      elapsed: stopwatch.elapsed,
+    );
+    _refreshProviderStates();
+    notifyListeners();
+  }
+
+  Future<void> selectTrack(Track track, {MusicService? service}) async {
+    _playback = _machine.enqueue(_playback, track);
+    final index = _playback.queue.length - 1;
+    _playback = _machine.playAt(_playback, index);
+    notifyListeners();
+
+    final target = service ?? track.preferredSource?.service;
+    await _startPlayback(track, target, resetPosition: true);
+  }
+
+  /// 仅加入队列，不改变当前播放。
+  void enqueue(Track track) {
+    _playback = _machine.enqueue(_playback, track);
+    notifyListeners();
+  }
+
+  /// 播放队列中指定位置（队列面板使用）。
+  Future<void> playAt(int index) async {
+    if (index < 0 || index >= _playback.queue.length) return;
+    final track = _playback.queue[index];
+    _playback = _machine.playAt(_playback, index);
+    notifyListeners();
+    await _startPlayback(
+      track,
+      track.preferredSource?.service,
+      resetPosition: true,
+    );
+  }
+
+  Future<void> switchSource(MusicService service) async {    final track = _playback.current;
+    if (track == null) return;
+    if (track.sourceFor(service) == null) return;
+    final position = _playback.position;
+    _playback = _machine.switchSource(_playback, service);
+    notifyListeners();
+    await _startPlayback(track, service, resetPosition: false, keepPosition: position);
+  }
+
+  Future<void> _startPlayback(
+    Track track,
+    MusicService? service, {
+    required bool resetPosition,
+    Duration? keepPosition,
+  }) async {
+    final provider = _providerFor(service);
+    final source = service == null ? null : track.sourceFor(service);
+    if (provider == null || source == null) {
+      _playback = _machine.block(
+        _playback,
+        BlockReason.notSupported,
+        '没有可用的播放来源',
+      );
+      _lyrics = null;
+      notifyListeners();
+      return;
+    }
+
+    // 用户显式选择的来源即使不可播放，也应成为当前活动来源，
+    // 这样错误提示与「打开官方 App」才会指向正确的服务。
+    _playback = _playback.copyWith(activeService: service);
+
+    try {
+      final result = await provider.startPlayback(source.providerTrackId);
+      if (!result.isStarted) {
+        _playback = _machine.block(
+          _playback,
+          _reasonFor(result.outcome),
+          result.message ?? '无法在客户端内播放',
+        );
+        await _loadLyrics(track, service);
+        notifyListeners();
+        return;
+      }
+
+      final start = resetPosition ? Duration.zero : (keepPosition ?? Duration.zero);
+      _playback = PlaybackState(
+        queue: _playback.queue,
+        queueIndex: _playback.queueIndex,
+        position: start,
+        status: PlaybackStatus.playing,
+        activeService: service,
+      );
+      _clock.seek(start);
+      _clock.start();
+      await _loadLyrics(track, service);
+      notifyListeners();
+    } on ProviderException catch (error) {
+      _playback = _machine.fail(_playback, error.message);
+      notifyListeners();
+    }
+  }
+
+  BlockReason _reasonFor(PlaybackStartOutcome outcome) {
+    switch (outcome) {
+      case PlaybackStartOutcome.notAuthorized:
+        return BlockReason.notAuthorized;
+      case PlaybackStartOutcome.notSupported:
+        return BlockReason.notSupported;
+      case PlaybackStartOutcome.regionRestricted:
+        return BlockReason.regionRestricted;
+      case PlaybackStartOutcome.requiresSubscription:
+        return BlockReason.requiresSubscription;
+      case PlaybackStartOutcome.failed:
+        return BlockReason.network;
+      case PlaybackStartOutcome.started:
+        return BlockReason.unknown;
+    }
+  }
+
+  Future<void> _loadLyrics(Track track, MusicService? service) async {
+    final provider = _providerFor(service);
+    final source = service == null ? null : track.sourceFor(service);
+    if (provider == null || source == null) {
+      _lyrics = null;
+      return;
+    }
+    try {
+      _lyrics = await provider.lyricsFor(source.providerTrackId);
+    } on ProviderException {
+      _lyrics = null;
+    }
+  }
+
+  Future<void> togglePlayPause() async {
+    final current = _playback.current;
+    if (current == null) return;
+
+    switch (_playback.status) {
+      case PlaybackStatus.playing:
+        _playback = _machine.pause(_playback);
+        _clock.pause();
+        await _providerFor(_playback.activeService)?.pause();
+        notifyListeners();
+      case PlaybackStatus.paused:
+        _playback = _machine.resume(_playback);
+        _clock.start();
+        await _providerFor(_playback.activeService)?.resume();
+        notifyListeners();
+      case PlaybackStatus.blocked:
+      case PlaybackStatus.error:
+        await _startPlayback(
+          current,
+          _playback.activeService ?? current.preferredSource?.service,
+          resetPosition: false,
+          keepPosition: _playback.position,
+        );
+      case PlaybackStatus.idle:
+      case PlaybackStatus.loading:
+        return;
+    }
+  }
+
+  Future<void> next() async {
+    if (_playback.queue.isEmpty) return;
+    if (!_playback.hasNext) return;
+    final target = _playback.queue[_playback.queueIndex + 1];
+    _playback = _machine.next(_playback);
+    notifyListeners();
+    await _startPlayback(
+      target,
+      target.preferredSource?.service,
+      resetPosition: true,
+    );
+  }
+
+  Future<void> previous() async {
+    if (_playback.queue.isEmpty) return;
+    final wasPlaying = _playback.status == PlaybackStatus.playing;
+    final beforeIndex = _playback.queueIndex;
+    _playback = _machine.previous(_playback);
+    final track = _playback.current;
+    if (track == null) return;
+
+    if (_playback.queueIndex == beforeIndex && _playback.position == Duration.zero && wasPlaying) {
+      // 只是回到本曲开头
+      _clock.seek(Duration.zero);
+      notifyListeners();
+      return;
+    }
+    notifyListeners();
+    await _startPlayback(
+      track,
+      track.preferredSource?.service,
+      resetPosition: true,
+    );
+  }
+
+  void toggleImmersive() {
+    _viewMode =
+        _viewMode == ViewMode.split ? ViewMode.immersive : ViewMode.split;
+    notifyListeners();
+  }
+
+  /// 外部（如连接页）触发 Provider 动作后刷新快照。
+  void refreshProviders() {
+    _refreshProviderStates();
+    notifyListeners();
+  }
+
+  Future<void> disconnect(MusicService service) async {
+    await _providerFor(service)?.disconnect();
+    await _credentials.delete(service.storageKey);
+    _refreshProviderStates();
+    notifyListeners();
+  }
+
+  Future<bool> openOfficialApp(Uri uri) => _handoff.open(uri);
+
+  /// 当前曲目在指定来源（或当前来源）下的官方跳转地址。
+  Uri? officialHandoffOfCurrent() {
+    final track = _playback.current;
+    if (track == null) return null;
+    final source =
+        track.sourceFor(_playback.activeService ?? MusicService.spotify) ??
+            track.preferredSource;
+    return source?.officialHandoffUri;
+  }
+
+  void _onClockTick(Duration position) {
+    if (_playback.status != PlaybackStatus.playing) return;
+    final track = _playback.current;
+    if (track == null) return;
+    final clamped = position > track.duration ? track.duration : position;
+    _playback = _playback.copyWith(position: clamped);
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _clockSubscription?.cancel();
+    unawaited(_clock.dispose());
+    super.dispose();
+  }
+}
