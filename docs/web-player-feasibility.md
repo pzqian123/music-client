@@ -14,6 +14,18 @@
 | 桥接层能否控制真实 `<audio>` | ✅ 能 | 自测：play / pause / seek / 状态回读全部正确 |
 | 页面被盖住后音频是否继续 | ✅ 继续 | 自测：覆盖后 2.5s 内位置推进 2502ms |
 
+## 真实环境验证（网易云，已通过）
+
+2026-10-31 23:5x，用户在本应用内登录网易云并播放《少女的祈祷》，随后点「盖住官方页面」：
+
+| 采样时刻 | 我们的 UI | 诊断行 |
+| --- | --- | --- |
+| 盖住后第 1 次 | 0:58 / 3:38，暂停按钮 | 媒体元素 3 个 · 播放中 · 页面「▶ 少女的祈祷」 |
+| 约 14 秒后 | 1:12 / 3:38，进度条前移 | 同上，位置持续增大 |
+
+结论：官方页面被完全盖住后，音频继续输出，我们的界面实时显示真实进度并可暂停/拖动。
+截图：`docs/screenshots/hidden-player-working.png`
+
 ## 桥接层自测结果（2026-10-31，本地音频页，不依赖任何账号）
 
 ```
@@ -39,6 +51,20 @@ coveredLater  paused=false  24531ms         ← 覆盖期间继续推进 2502ms
 - 第二个：否则页面被盖住/遮挡时 Chromium 判定不可见，会节流甚至暂停播放。
 
 在 `WebViewEnvironmentSettings.additionalBrowserArguments` 里设置。
+
+### 另一个坑：官方播放器的音频对象不在 DOM 里
+
+网易云用 `new Audio()` 创建音频对象但**不挂到 document**，
+`document.querySelectorAll('audio, video')` 永远返回 0，进度条一直是 0:00。
+
+解决：在 `AT_DOCUMENT_START` 注入脚本劫持 `Audio` 构造函数、`Document.createElement`
+与 `HTMLMediaElement.prototype.play`，把创建过的元素登记到 `window.__dshMediaEls`；
+再叠加一层「官方播放栏文本」兜底（读 `.m-playbar .time` 与播放按钮 title）。
+
+### 还有：登录态要持久化
+
+不指定 `userDataFolder` 时每次启动都是全新的浏览器会话，官方页面要重新登录。
+现在固定用 `%LOCALAPPDATA%\MusicMerge\webview2`。
 
 ### 另一个坑：本地/自建静态服务器必须支持 Range
 

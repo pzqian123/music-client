@@ -33,6 +33,12 @@ class _DemoPageState extends State<DemoPage> {
   bool _covered = false;
   WebPlayerState _state = const WebPlayerState.empty();
   String _url = '';
+
+  String get _currentPath {
+    if (_url.isEmpty) return '?';
+    final parsed = Uri.tryParse(_url);
+    return parsed?.path ?? _url;
+  }
   Timer? _poll;
   final TextEditingController _idController = TextEditingController();
 
@@ -183,7 +189,8 @@ class _DemoPageState extends State<DemoPage> {
               child: Text(
                 '诊断：媒体元素 ${_handle.lastMediaCount} 个 · '
                 '${_state.hasMedia ? (_state.isPlaying ? "播放中" : "已暂停") : "未检测到播放"} · '
-                '页面 ${_url.isEmpty ? "?" : Uri.parse(_url).path}',
+                '页面「${_state.pageTitle}」 · 路径 $_currentPath · '
+                '页面播放栏：${_state.nowPlaying.isEmpty ? "空" : _state.nowPlaying}',
                 style: const TextStyle(fontSize: 11, color: Colors.white38),
               ),
             ),

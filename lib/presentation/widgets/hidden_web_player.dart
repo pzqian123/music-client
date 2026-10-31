@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -130,11 +131,14 @@ class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
   /// Windows 需要 WebView2 启动参数：
   /// - `--autoplay-policy=no-user-gesture-required`：允许 JS 直接 play()（否则官方页面必须手点）
   /// - `--disable-features=CalculateNativeWinOcclusion`：页面被盖住时不要判定为不可见而节流
+  ///
+  /// 同时指定持久化的 userDataFolder：否则每次启动都是新的浏览器会话，官方页面要重新登录。
   Future<void> _prepareEnvironment() async {
     if (!Platform.isWindows) return;
     try {
       final environment = await WebViewEnvironment.create(
         settings: WebViewEnvironmentSettings(
+          userDataFolder: _userDataFolder(),
           additionalBrowserArguments:
               '--autoplay-policy=no-user-gesture-required '
               '--disable-features=CalculateNativeWinOcclusion',
@@ -148,6 +152,23 @@ class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
     }
   }
 
+  String _userDataFolder() {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    final base = (localAppData == null || localAppData.isEmpty)
+        ? Directory.systemTemp.path
+        : localAppData;
+    final dir = Directory('$base${Platform.pathSeparator}MusicMerge'
+        '${Platform.pathSeparator}webview2');
+    if (!dir.existsSync()) {
+      try {
+        dir.createSync(recursive: true);
+      } catch (_) {
+        // 创建失败时交给 WebView2 用默认目录。
+      }
+    }
+    return dir.path;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (Platform.isWindows && _environment == null && !_environmentFailed) {
@@ -158,6 +179,12 @@ class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
       key: const ValueKey('official-web-player'),
       webViewEnvironment: _environment,
       initialUrlRequest: URLRequest(url: WebUri(widget.target.homeUrl)),
+      initialUserScripts: UnmodifiableListView<UserScript>([
+        UserScript(
+          source: mediaTapScript,
+          injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+        ),
+      ]),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         mediaPlaybackRequiresUserGesture: false,

@@ -12,6 +12,15 @@ class WebPlayerState {
   final Duration duration;
   final double volume;
 
+  /// 页面标题，用于判断当前官方页面停在哪。
+  final String pageTitle;
+
+  /// 官方页面播放栏上的曲名（有则说明页面里确实在放某首歌）。
+  final String nowPlaying;
+
+  /// 状态来源：`element`（直接读媒体元素）或 `navbar`（从官方播放栏推断）。
+  final String source;
+
   const WebPlayerState({
     required this.hasMedia,
     required this.paused,
@@ -19,6 +28,9 @@ class WebPlayerState {
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.volume = 1,
+    this.pageTitle = '',
+    this.nowPlaying = '',
+    this.source = '',
   });
 
   const WebPlayerState.empty()
@@ -27,7 +39,10 @@ class WebPlayerState {
         ended = false,
         position = Duration.zero,
         duration = Duration.zero,
-        volume = 1;
+        volume = 1,
+        pageTitle = '',
+        nowPlaying = '',
+        source = '';
 
   bool get isPlaying => hasMedia && !paused && !ended;
 
@@ -39,7 +54,15 @@ class WebPlayerState {
   }
 
   static WebPlayerState fromJsonObject(Map<String, dynamic> json) {
-    if (json['hasMedia'] != true) return const WebPlayerState.empty();
+    String asText(Object? value) => value is String ? value : '';
+    if (json['hasMedia'] != true) {
+      return WebPlayerState(
+        hasMedia: false,
+        paused: true,
+        pageTitle: asText(json['pageTitle']),
+        nowPlaying: asText(json['nowPlaying']),
+      );
+    }
     double asDouble(Object? value) =>
         value is num && value.isFinite ? value.toDouble() : 0;
     return WebPlayerState(
@@ -49,6 +72,9 @@ class WebPlayerState {
       position: Duration(milliseconds: (asDouble(json['position']) * 1000).round()),
       duration: Duration(milliseconds: (asDouble(json['duration']) * 1000).round()),
       volume: asDouble(json['volume']),
+      pageTitle: asText(json['pageTitle']),
+      nowPlaying: asText(json['nowPlaying']),
+      source: asText(json['source']),
     );
   }
 }
