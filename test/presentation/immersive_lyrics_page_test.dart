@@ -107,6 +107,11 @@ void main() {
     expect(find.byKey(const Key('immersive-ambient-backdrop')), findsOneWidget);
     expect(find.byKey(const Key('focus-lyrics-viewport')), findsOneWidget);
     expect(find.byKey(const Key('immersive-controls')), findsOneWidget);
+    final controlsRect = tester.getRect(
+      find.byKey(const Key('immersive-controls')),
+    );
+    expect(controlsRect.height, greaterThan(80));
+    expect(controlsRect.bottom, lessThanOrEqualTo(600));
 
     await tester.tap(find.byKey(const Key('exit-immersive')));
     await tester.pumpAndSettle();

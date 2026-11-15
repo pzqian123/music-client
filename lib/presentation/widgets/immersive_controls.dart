@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../../application/music_controller.dart';
@@ -31,25 +29,39 @@ class ImmersiveControls extends StatelessWidget {
       key: const Key('immersive-controls'),
       duration: const Duration(milliseconds: 360),
       curve: Curves.easeOutCubic,
-      opacity: chromeVisible ? 1 : 0.2,
-      child: SafeArea(
-        top: false,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 4, 24, 14),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+      opacity: chromeVisible ? 1 : 0.55,
+      child: SizedBox(
+        height: 112,
+        child: SafeArea(
+          top: false,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 4, 24, 14),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.065),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.white.withValues(alpha: 0.11),
+                          Colors.white.withValues(alpha: 0.045),
+                        ],
+                      ),
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.11),
+                        color: Colors.white.withValues(alpha: 0.14),
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.18),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
                     ),
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(18, 12, 18, 10),

@@ -62,11 +62,9 @@ class _ImmersiveLyricsPageState extends State<ImmersiveLyricsPage> {
     final music = context.watch<MusicController>();
     final playback = music.playback;
     final track = playback.current;
-
     if (track == null) {
       return const Scaffold(body: SizedBox.shrink());
     }
-
     final theme = Theme.of(context);
     final coverBytes = music.coverBytesFor(track);
 
@@ -115,76 +113,101 @@ class _ImmersiveLyricsPageState extends State<ImmersiveLyricsPage> {
                       trackKey: track.id,
                     ),
                     SafeArea(
-                      child: Column(
+                      child: Stack(
+                        fit: StackFit.expand,
                         children: [
-                          AnimatedOpacity(
-                            duration: const Duration(milliseconds: 320),
-                            opacity: _chromeVisible ? 1 : 0.2,
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 8, 16, 0),
-                              child: Row(
-                                children: [
-                                  IconButton(
-                                    key: const Key('exit-immersive'),
-                                    tooltip: '返回分栏视图',
-                                    onPressed: music.toggleImmersive,
-                                    icon: const Icon(Icons.keyboard_arrow_down),
+                          Column(
+                            children: [
+                              AnimatedOpacity(
+                                duration: const Duration(milliseconds: 320),
+                                opacity: _chromeVisible ? 1 : 0.2,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    8,
+                                    16,
+                                    0,
                                   ),
-                                  const SizedBox(width: 4),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          track.title,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.titleMedium
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w700,
-                                                letterSpacing: -0.2,
-                                              ),
+                                  child: Row(
+                                    children: [
+                                      IconButton(
+                                        key: const Key('exit-immersive'),
+                                        tooltip: '返回分栏视图',
+                                        onPressed: music.toggleImmersive,
+                                        icon: const Icon(
+                                          Icons.keyboard_arrow_down,
                                         ),
-                                        Text(
-                                          track.artist,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodySmall
-                                              ?.copyWith(color: Colors.white60),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              track.title,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: theme.textTheme.titleMedium
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w700,
+                                                    letterSpacing: -0.2,
+                                                  ),
+                                            ),
+                                            Text(
+                                              track.artist,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: theme.textTheme.bodySmall
+                                                  ?.copyWith(
+                                                    color: Colors.white60,
+                                                  ),
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '${formatDuration(playback.position)} / '
+                                        '${formatDuration(track.duration)}',
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                              color: Colors.white60,
+                                              fontFeatures: const [
+                                                FontFeature.tabularFigures(),
+                                              ],
+                                            ),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${formatDuration(playback.position)} / '
-                                    '${formatDuration(track.duration)}',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: Colors.white60,
-                                      fontFeatures: const [
-                                        FontFeature.tabularFigures(),
-                                      ],
-                                    ),
+                                ),
+                              ),
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    0,
+                                    12,
+                                    104,
                                   ),
-                                ],
+                                  child: FocusLyricsViewport(
+                                    key: const Key('focus-lyrics-viewport'),
+                                    timeline: music.lyrics,
+                                    position: playback.position,
+                                    onSeek: music.seekTo,
+                                  ),
+                                ),
                               ),
-                            ),
+                            ],
                           ),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                              child: FocusLyricsViewport(
-                                key: const Key('focus-lyrics-viewport'),
-                                timeline: music.lyrics,
-                                position: playback.position,
-                                onSeek: music.seekTo,
-                              ),
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: ImmersiveControls(
+                              music: music,
+                              chromeVisible: _chromeVisible,
                             ),
-                          ),
-                          ImmersiveControls(
-                            music: music,
-                            chromeVisible: _chromeVisible,
                           ),
                         ],
                       ),

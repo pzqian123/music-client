@@ -93,7 +93,7 @@ class _ImmersiveAmbientBackdropState extends State<ImmersiveAmbientBackdrop>
                       ),
                     ),
             ),
-            ColoredBox(color: Colors.black.withValues(alpha: 0.56)),
+            ColoredBox(color: Colors.black.withValues(alpha: 0.4)),
             AnimatedBuilder(
               animation: _drift,
               builder: (context, _) {
@@ -110,7 +110,7 @@ class _ImmersiveAmbientBackdropState extends State<ImmersiveAmbientBackdrop>
                           ),
                           radius: 1.05,
                           colors: [
-                            warm.withValues(alpha: 0.5),
+                            warm.withValues(alpha: 0.56),
                             warm.withValues(alpha: 0.08),
                             Colors.transparent,
                           ],
@@ -127,7 +127,7 @@ class _ImmersiveAmbientBackdropState extends State<ImmersiveAmbientBackdrop>
                           ),
                           radius: 0.9,
                           colors: [
-                            cool.withValues(alpha: 0.34),
+                            cool.withValues(alpha: 0.4),
                             cool.withValues(alpha: 0.05),
                             Colors.transparent,
                           ],
@@ -141,9 +141,9 @@ class _ImmersiveAmbientBackdropState extends State<ImmersiveAmbientBackdrop>
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
                           colors: [
-                            Colors.black.withValues(alpha: 0.08),
-                            Colors.black.withValues(alpha: 0.18),
-                            Colors.black.withValues(alpha: 0.62),
+                            Colors.black.withValues(alpha: 0.02),
+                            Colors.black.withValues(alpha: 0.12),
+                            Colors.black.withValues(alpha: 0.5),
                           ],
                         ),
                       ),
