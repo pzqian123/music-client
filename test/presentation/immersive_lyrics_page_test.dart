@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:music_client/app.dart';
 import 'package:music_client/application/music_controller.dart';
 import 'package:music_client/application/playback_clock.dart';
+import 'package:music_client/domain/playback.dart';
 import 'package:music_client/platform/official_handoff.dart';
 import 'package:music_client/platform/secure_credentials.dart';
 import 'package:music_client/presentation/immersive_lyrics_page.dart';
@@ -12,7 +13,10 @@ import 'package:music_client/providers/fake_netease_provider.dart';
 import 'package:music_client/providers/fake_spotify_provider.dart';
 import 'package:provider/provider.dart';
 
-Future<void> runAsync(WidgetTester tester, Future<void> Function() action) async {
+Future<void> runAsync(
+  WidgetTester tester,
+  Future<void> Function() action,
+) async {
   var done = false;
   Object? error;
   StackTrace? stackTrace;
@@ -50,6 +54,12 @@ class _Harness {
       value: controller,
       child: MaterialApp(
         theme: buildTheme(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(disableAnimations: true),
+          child: child!,
+        ),
         home: Scaffold(body: child),
       ),
     );
@@ -94,11 +104,30 @@ void main() {
 
     expect(find.byKey(const Key('immersive-lyrics')), findsOneWidget);
     expect(find.text('夜空中最亮的星'), findsWidgets);
+    expect(find.byKey(const Key('immersive-ambient-backdrop')), findsOneWidget);
+    expect(find.byKey(const Key('focus-lyrics-viewport')), findsOneWidget);
+    expect(find.byKey(const Key('immersive-controls')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('exit-immersive')));
     await tester.pumpAndSettle();
 
     expect(harness.controller.viewMode, ViewMode.split);
+  });
+
+  testWidgets('Space toggles playback in immersive mode', (tester) async {
+    final harness = _Harness();
+    addTearDown(harness.controller.dispose);
+
+    await tester.pumpWidget(harness.build(const SizedBox.shrink()));
+    await runAsync(tester, harness.playMerged);
+    harness.controller.toggleImmersive();
+
+    await tester.pumpWidget(harness.build(const ImmersiveLyricsPage()));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.playback.status, PlaybackStatus.paused);
   });
 
   testWidgets('Esc 退出沉浸模式', (tester) async {
