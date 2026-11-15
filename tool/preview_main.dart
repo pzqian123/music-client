@@ -33,7 +33,9 @@ Future<void> main() async {
   await controller.selectTrack(track, service: MusicService.netease);
   clock.seek(const Duration(milliseconds: 9000));
 
-  final immersive = Uri.base.queryParameters['view'] == 'immersive';
+  final immersive =
+      Uri.base.queryParameters['view'] == 'immersive' ||
+      const bool.fromEnvironment('DSH_PREVIEW_IMMERSIVE');
   if (immersive) controller.toggleImmersive();
 
   runApp(
