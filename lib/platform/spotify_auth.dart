@@ -12,12 +12,8 @@ import 'pkce.dart';
 import 'secure_credentials.dart';
 import '../providers/http_client_port.dart';
 
-const spotifyScopes = <String>[
-  'user-read-playback-state',
-  'user-modify-playback-state',
-  'user-read-currently-playing',
-  'playlist-read-private',
-];
+/// 首版只做搜索与元数据，不需要申请播放控制、曲库或歌单权限。
+const spotifyScopes = <String>[];
 
 class SpotifyTokens {
   final String accessToken;
@@ -39,11 +35,11 @@ class SpotifyTokens {
   bool get isExpired => isExpiredAt(DateTime.now());
 
   Map<String, dynamic> toJson() => {
-        'access_token': accessToken,
-        if (refreshToken != null) 'refresh_token': refreshToken,
-        'expires_at': expiresAt.toIso8601String(),
-        'scope': scope,
-      };
+    'access_token': accessToken,
+    if (refreshToken != null) 'refresh_token': refreshToken,
+    'expires_at': expiresAt.toIso8601String(),
+    'scope': scope,
+  };
 
   String encode() => jsonEncode(toJson());
 
@@ -53,7 +49,7 @@ class SpotifyTokens {
       refreshToken: json['refresh_token'] as String?,
       expiresAt:
           DateTime.tryParse(json['expires_at'] as String? ?? '') ??
-              DateTime.fromMillisecondsSinceEpoch(0),
+          DateTime.fromMillisecondsSinceEpoch(0),
       scope: json['scope'] as String? ?? '',
     );
   }
@@ -77,9 +73,9 @@ class SpotifyAuth {
     required HttpFetcher httpFetcher,
     required BrowserLauncher browserLauncher,
     DateTime Function()? now,
-  })  : _fetcher = httpFetcher,
-        _launcher = browserLauncher,
-        _now = now ?? DateTime.now;
+  }) : _fetcher = httpFetcher,
+       _launcher = browserLauncher,
+       _now = now ?? DateTime.now;
 
   final String clientId;
   final SecureCredentials credentials;
@@ -87,10 +83,12 @@ class SpotifyAuth {
   final BrowserLauncher _launcher;
   final DateTime Function() _now;
 
-  static final Uri authorizeEndpoint =
-      Uri.parse('https://accounts.spotify.com/authorize');
-  static final Uri tokenEndpoint =
-      Uri.parse('https://accounts.spotify.com/api/token');
+  static final Uri authorizeEndpoint = Uri.parse(
+    'https://accounts.spotify.com/authorize',
+  );
+  static final Uri tokenEndpoint = Uri.parse(
+    'https://accounts.spotify.com/api/token',
+  );
 
   Uri buildAuthorizeUrl({
     required PkcePair pkce,
@@ -105,14 +103,16 @@ class SpotifyAuth {
         'code_challenge_method': pkce.method,
         'code_challenge': pkce.challenge,
         'state': state,
-        'scope': spotifyScopes.join(' '),
+        if (spotifyScopes.isNotEmpty) 'scope': spotifyScopes.join(' '),
         'show_dialog': 'false',
       },
     );
   }
 
   /// 完整登录：开浏览器 → 回环回调 → 换取令牌 → 写入安全存储。
-  Future<SpotifyTokens> signIn({Duration timeout = const Duration(minutes: 5)}) async {
+  Future<SpotifyTokens> signIn({
+    Duration timeout = const Duration(minutes: 5),
+  }) async {
     if (clientId.isEmpty) {
       throw const OAuthException('未配置 Spotify 客户端 ID');
     }
@@ -160,7 +160,8 @@ class SpotifyAuth {
     return tokens;
   }
 
-  Future<SpotifyTokens> exchangeCode({    required String code,
+  Future<SpotifyTokens> exchangeCode({
+    required String code,
     required String verifier,
     required Uri redirectUri,
   }) async {
@@ -168,13 +169,15 @@ class SpotifyAuth {
       tokenEndpoint,
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
       contentType: 'application/x-www-form-urlencoded',
-      body: Uri(queryParameters: {
-        'grant_type': 'authorization_code',
-        'code': code,
-        'redirect_uri': redirectUri.toString(),
-        'client_id': clientId,
-        'code_verifier': verifier,
-      }).query,
+      body: Uri(
+        queryParameters: {
+          'grant_type': 'authorization_code',
+          'code': code,
+          'redirect_uri': redirectUri.toString(),
+          'client_id': clientId,
+          'code_verifier': verifier,
+        },
+      ).query,
     );
     final tokens = _parseTokenResponse(response);
     await credentials.write(spotifyTokenStorageKey, tokens.encode());
@@ -190,11 +193,13 @@ class SpotifyAuth {
       tokenEndpoint,
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
       contentType: 'application/x-www-form-urlencoded',
-      body: Uri(queryParameters: {
-        'grant_type': 'refresh_token',
-        'refresh_token': refreshToken,
-        'client_id': clientId,
-      }).query,
+      body: Uri(
+        queryParameters: {
+          'grant_type': 'refresh_token',
+          'refresh_token': refreshToken,
+          'client_id': clientId,
+        },
+      ).query,
     );
     final parsed = _parseTokenResponse(response);
     // 刷新响应可能不返回新的 refresh_token，沿用旧的。

@@ -22,10 +22,7 @@ class ConnectionsPage extends StatelessWidget {
         children: [
           Text('连接', style: theme.textTheme.headlineSmall),
           const SizedBox(height: 6),
-          Text(
-            '仅使用官方授权流程；本应用不会请求或保存你的账号密码。',
-            style: theme.textTheme.bodySmall,
-          ),
+          Text('仅使用官方授权流程；本应用不会请求或保存你的账号密码。', style: theme.textTheme.bodySmall),
           const SizedBox(height: 16),
           const _OfficialPlayerCard(),
           const SizedBox(height: 12),
@@ -71,9 +68,7 @@ class _OfficialPlayerCard extends StatelessWidget {
                   child: Text('官方网页播放器', style: theme.textTheme.titleMedium),
                 ),
                 Text(
-                  engine == null
-                      ? '不可用'
-                      : (engine.isAttached ? '已就绪' : '未挂载'),
+                  engine == null ? '不可用' : (engine.isAttached ? '已就绪' : '未挂载'),
                   key: const Key('official-player-state'),
                   style: theme.textTheme.bodySmall,
                 ),
@@ -129,7 +124,11 @@ class _ProviderCard extends StatelessWidget {
       await provider.connect();
       music.refreshProviders();
       messenger.showSnackBar(
-        SnackBar(content: Text('${provider.displayName} 已连接（演示）')),
+        SnackBar(
+          content: Text(
+            '${provider.displayName} 已连接${provider.isDemo ? '（演示）' : ''}',
+          ),
+        ),
       );
     } on ProviderException catch (error) {
       music.refreshProviders();
@@ -140,8 +139,8 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final snapshot = music.providerStates[provider.service] ??
-        provider.snapshot;
+    final snapshot =
+        music.providerStates[provider.service] ?? provider.snapshot;
     final caps = snapshot.capabilities;
     final connected = snapshot.state == ProviderState.connected;
     final handoff = _handoffUri;
@@ -232,8 +231,9 @@ class _ProviderCard extends StatelessWidget {
     final theme = Theme.of(context);
     return Chip(
       label: Text(label, style: theme.textTheme.labelSmall),
-      backgroundColor:
-          enabled ? theme.colorScheme.primary.withValues(alpha: 0.18) : null,
+      backgroundColor: enabled
+          ? theme.colorScheme.primary.withValues(alpha: 0.18)
+          : null,
       side: BorderSide(
         color: enabled ? theme.colorScheme.primary : theme.dividerColor,
       ),

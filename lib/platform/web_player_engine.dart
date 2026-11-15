@@ -18,6 +18,14 @@ class WebPlayerState {
   /// 官方页面播放栏上的曲名（有则说明页面里确实在放某首歌）。
   final String nowPlaying;
 
+  /// 官方播放栏或 Media Session 暴露的当前曲目 ID（网易云为数字歌曲 ID）。
+  final String nowPlayingId;
+
+  /// 浏览器 Media Session 元数据；页面自行切歌时通常比 DOM 更及时。
+  final String mediaSessionTitle;
+  final String mediaSessionArtist;
+  final String mediaSessionAlbum;
+
   /// 状态来源：`element`（直接读媒体元素）或 `navbar`（从官方播放栏推断）。
   final String source;
 
@@ -30,6 +38,10 @@ class WebPlayerState {
     this.volume = 1,
     this.pageTitle = '',
     this.nowPlaying = '',
+    this.nowPlayingId = '',
+    this.mediaSessionTitle = '',
+    this.mediaSessionArtist = '',
+    this.mediaSessionAlbum = '',
     this.source = '',
   });
 
@@ -42,6 +54,10 @@ class WebPlayerState {
         volume = 1,
         pageTitle = '',
         nowPlaying = '',
+        nowPlayingId = '',
+        mediaSessionTitle = '',
+        mediaSessionArtist = '',
+        mediaSessionAlbum = '',
         source = '';
 
   bool get isPlaying => hasMedia && !paused && !ended;
@@ -61,6 +77,10 @@ class WebPlayerState {
         paused: true,
         pageTitle: asText(json['pageTitle']),
         nowPlaying: asText(json['nowPlaying']),
+        nowPlayingId: asText(json['nowPlayingId']),
+        mediaSessionTitle: asText(json['mediaSessionTitle']),
+        mediaSessionArtist: asText(json['mediaSessionArtist']),
+        mediaSessionAlbum: asText(json['mediaSessionAlbum']),
       );
     }
     double asDouble(Object? value) =>
@@ -74,6 +94,10 @@ class WebPlayerState {
       volume: asDouble(json['volume']),
       pageTitle: asText(json['pageTitle']),
       nowPlaying: asText(json['nowPlaying']),
+      nowPlayingId: asText(json['nowPlayingId']),
+      mediaSessionTitle: asText(json['mediaSessionTitle']),
+      mediaSessionArtist: asText(json['mediaSessionArtist']),
+      mediaSessionAlbum: asText(json['mediaSessionAlbum']),
       source: asText(json['source']),
     );
   }

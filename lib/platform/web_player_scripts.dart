@@ -85,7 +85,7 @@ const String mediaTapScript = r"""
 /// 读取状态（使用统一选择器）。
 const String mediaStateScript = r"""
 (function () {
-  function nowPlaying() {
+  function nowPlayingNode() {
     var selectors = [
       '.m-playbar .words a',
       '.m-playbar .words',
@@ -94,9 +94,51 @@ const String mediaStateScript = r"""
     ];
     for (var i = 0; i < selectors.length; i++) {
       var node = document.querySelector(selectors[i]);
-      if (node && node.textContent) { return node.textContent.trim().slice(0, 60); }
+      if (node) { return node; }
     }
-    return '';
+    return null;
+  }
+
+  function nowPlaying() {
+    var node = nowPlayingNode();
+    if (!node) { return ''; }
+    var title = (node.getAttribute && node.getAttribute('title')) || '';
+    var text = node.textContent || title || '';
+    return text.trim().slice(0, 60);
+  }
+
+  function nowPlayingId() {
+    var candidates = [
+      '.m-playbar .words a[href*="song?id="]',
+      '.m-playbar a[href*="song?id="]',
+      '#g_player a[href*="song?id="]',
+      '[data-testid="context-item-link"]',
+      '[data-testid="nowplaying-track-link"]'
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var node = document.querySelector(candidates[i]);
+      if (!node) { continue; }
+      var href = node.getAttribute('href') || node.href || '';
+      var match = /song\?id=(\d+)/.exec(href);
+      if (match) { return match[1]; }
+      var dataId = node.getAttribute('data-id') ||
+        node.getAttribute('data-song-id') || '';
+      if (/^\d+$/.test(dataId)) { return dataId; }
+    }
+    var active = document.querySelector(
+      '.m-playbar [data-song-id], #g_player [data-song-id]'
+    );
+    return active ? (active.getAttribute('data-song-id') || '') : '';
+  }
+
+  function mediaSessionField(name) {
+    try {
+      var metadata = navigator.mediaSession && navigator.mediaSession.metadata;
+      if (!metadata || !metadata[name]) { return ''; }
+      return String(metadata[name]).trim().slice(0, 100);
+    } catch (e) {
+      return '';
+    }
   }
 
   function mssToMs(text) {
@@ -112,7 +154,11 @@ const String mediaStateScript = r"""
   var base = {
     mediaCount: count,
     pageTitle: document.title,
-    nowPlaying: nowPlaying()
+    nowPlaying: nowPlaying(),
+    nowPlayingId: nowPlayingId(),
+    mediaSessionTitle: mediaSessionField('title'),
+    mediaSessionArtist: mediaSessionField('artist'),
+    mediaSessionAlbum: mediaSessionField('album')
   };
 
   if (el) {
@@ -147,6 +193,74 @@ const String mediaStateScript = r"""
   return JSON.stringify(base);
 })();
 """;
+
+/// 打开网易云官方播放列表；已经展开时不重复点击。
+const String neteaseQueueOpenScript = r"""
+(function () {
+  var panel = document.querySelector('#g_playlist');
+  if (panel && panel.offsetHeight > 0 &&
+      getComputedStyle(panel).display !== 'none') {
+    return 'already-open';
+  }
+  var nodes = Array.from(document.querySelectorAll('a,button,span'));
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    var label = [
+      node.getAttribute('title') || '',
+      node.getAttribute('aria-label') || '',
+      node.className || '',
+      node.textContent || ''
+    ].join(' ');
+    if (/播放列表|m-playbar.*icn-list|icn-list/.test(label)) {
+      node.click();
+      return 'opened';
+    }
+  }
+  return 'queue-button-not-found';
+})();
+""";
+
+/// 读取网易云官方播放列表（保留官方顺序与当前项）。
+const String neteaseQueueReadScript = r"""
+(function () {
+  function text(node) {
+    return node ? (node.textContent || '').replace(/\s+/g, ' ').trim() : '';
+  }
+  var root = document.querySelector('#g_playlist .listbdc');
+  if (!root) { return JSON.stringify({ items: [] }); }
+  var items = Array.from(root.querySelectorAll('li[data-id]')).map(function (row) {
+    var id = row.getAttribute('data-id') || '';
+    var title = text(row.querySelector('.col-2'));
+    var artistNode = row.querySelector('.col-4 span');
+    var artist = artistNode
+      ? ((artistNode.getAttribute('title') || '') || text(artistNode))
+      : '';
+    return {
+      id: id,
+      title: title,
+      artist: artist,
+      duration: text(row.querySelector('.col-5')),
+      selected: row.classList.contains('z-sel')
+    };
+  }).filter(function (item) {
+    return /^\d+$/.test(item.id) && item.title;
+  });
+  return JSON.stringify({ items: items });
+})();
+""";
+
+String neteaseQueuePlayScript(String songId) {
+  final safe = RegExp(r'^\d+$').hasMatch(songId) ? songId : '';
+  return r"""
+(function () {
+  var id = '"""+safe+r"""';
+  var row = document.querySelector('#g_playlist li[data-id="' + id + '"]');
+  if (!row) { return 'not-found'; }
+  row.click();
+  return 'clicked';
+})();
+""";
+}
 
 /// 播放/暂停切换，返回操作前的状态便于诊断。
 const String mediaToggleScript = r"""

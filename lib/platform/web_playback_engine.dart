@@ -115,6 +115,70 @@ Track trackFromOfficialResult(OfficialSearchResult result) {
   );
 }
 
+class OfficialQueueItem {
+  final String id;
+  final String title;
+  final String artist;
+  final String duration;
+  final bool selected;
+
+  const OfficialQueueItem({
+    required this.id,
+    required this.title,
+    required this.artist,
+    required this.duration,
+    this.selected = false,
+  });
+}
+
+List<OfficialQueueItem> parseOfficialQueue(String raw) {
+  final trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return const [];
+  try {
+    final decoded = jsonDecode(trimmed);
+    if (decoded is! Map<String, dynamic>) return const [];
+    final items = decoded['items'];
+    if (items is! List) return const [];
+    return [
+      for (final item in items)
+        if (item is Map<String, dynamic> &&
+            item['id'] is String &&
+            (item['id'] as String).isNotEmpty &&
+            item['title'] is String &&
+            (item['title'] as String).isNotEmpty)
+          OfficialQueueItem(
+            id: item['id'] as String,
+            title: item['title'] as String,
+            artist: (item['artist'] as String?) ?? '',
+            duration: (item['duration'] as String?) ?? '',
+            selected: item['selected'] == true,
+          ),
+    ];
+  } catch (_) {
+    return const [];
+  }
+}
+
+Track trackFromOfficialQueueItem(OfficialQueueItem item) {
+  return Track(
+    id: 'netease-web-${item.id}',
+    title: item.title,
+    artist: item.artist,
+    album: '',
+    duration: parseClockDuration(item.duration),
+    sources: [
+      TrackSource(
+        service: MusicService.netease,
+        providerTrackId: item.id,
+        playable: true,
+        officialHandoffUri: Uri.tryParse(
+          'https://music.163.com/song?id=${item.id}',
+        ),
+      ),
+    ],
+  );
+}
+
 class WebPlaybackEngine extends ChangeNotifier {
   WebPlaybackEngine({
     required this.bridge,
@@ -166,6 +230,10 @@ class WebPlaybackEngine extends ChangeNotifier {
   static bool _sameState(WebPlayerState a, WebPlayerState b) {
     if (a.hasMedia != b.hasMedia || a.paused != b.paused) return false;
     if (a.nowPlaying != b.nowPlaying) return false;
+    if (a.nowPlayingId != b.nowPlayingId) return false;
+    if (a.mediaSessionTitle != b.mediaSessionTitle) return false;
+    if (a.mediaSessionArtist != b.mediaSessionArtist) return false;
+    if (a.mediaSessionAlbum != b.mediaSessionAlbum) return false;
     return (a.position.inMilliseconds - b.position.inMilliseconds).abs() < 400;
   }
 
@@ -173,6 +241,44 @@ class WebPlaybackEngine extends ChangeNotifier {
     if (query.trim().isEmpty) return const [];
     final results = await bridge.searchNetease(query);
     return results.map(trackFromOfficialResult).toList();
+  }
+
+  /// 读取网易云官方网页的真实播放队列。
+  Future<List<Track>> fetchNeteaseQueue() async {
+    try {
+      await bridge.runScript(neteaseQueueOpenScript);
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      final raw = await bridge.runScript(neteaseQueueReadScript);
+      final items = parseOfficialQueue(raw);
+      return items.map(trackFromOfficialQueueItem).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 点击官方播放列表中的曲目，保留网页自己的队列顺序和权益判断。
+  Future<bool> playNeteaseQueueItem(String songId) async {
+    if (songId.isEmpty) return false;
+    try {
+      await bridge.runScript(neteaseQueueOpenScript);
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      final clicked = await bridge.runScript(
+        neteaseQueuePlayScript(songId),
+      );
+      if (!clicked.startsWith('clicked')) return false;
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        await _poll();
+        if (_state.hasMedia &&
+            _state.nowPlayingId == songId &&
+            !_state.paused) {
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 打开曲目页并点击官方播放按钮，返回是否成功起播。
@@ -424,6 +530,10 @@ class WebPlaybackEngine extends ChangeNotifier {
       volume: _state.volume,
       pageTitle: _state.pageTitle,
       nowPlaying: _state.nowPlaying,
+      nowPlayingId: _state.nowPlayingId,
+      mediaSessionTitle: _state.mediaSessionTitle,
+      mediaSessionArtist: _state.mediaSessionArtist,
+      mediaSessionAlbum: _state.mediaSessionAlbum,
       source: _state.source,
     );
     notifyListeners();

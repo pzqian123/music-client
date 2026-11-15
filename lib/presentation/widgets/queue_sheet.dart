@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,6 +10,7 @@ import 'track_result_tile.dart';
 
 /// 队列面板：宽屏用对话框，窄屏用底部弹窗。
 Future<void> showQueueSheet(BuildContext context) {
+  unawaited(context.read<MusicController>().refreshQueue());
   final wide = MediaQuery.sizeOf(context).width >= 900;
   if (wide) {
     return showDialog<void>(
@@ -41,8 +44,28 @@ class QueuePanel extends StatelessWidget {
           child: Row(
             children: [
               Text('播放队列', style: theme.textTheme.titleMedium),
+              if (music.usesOfficialQueue) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '网易云官方',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ],
               const Spacer(),
               Text('${queue.length} 首', style: theme.textTheme.bodySmall),
+              IconButton(
+                tooltip: '刷新官方播放列表',
+                onPressed: music.queueLoading ? null : music.refreshQueue,
+                icon: music.queueLoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 18),
+              ),
             ],
           ),
         ),

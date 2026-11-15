@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:music_client/domain/models.dart';
+import 'package:music_client/platform/auth_keys.dart';
 import 'package:music_client/platform/secure_credentials.dart';
+import 'package:music_client/platform/spotify_auth.dart';
 import 'package:music_client/providers/http_client_port.dart';
 import 'package:music_client/providers/music_provider.dart';
 import 'package:music_client/providers/netease_provider.dart';
@@ -45,7 +47,8 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: InMemoryCredentials(),
-        fetcher: (uri, {headers, body, contentType}) async => const HttpResponse(200, '{}'),
+        fetcher: (uri, {headers, body, contentType}) async =>
+            const HttpResponse(200, '{}'),
       );
       expect(
         () => provider.search('夜空'),
@@ -90,10 +93,14 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: credentials,
-        fetcher: (uri, {headers, body, contentType}) async => const HttpResponse(401, '{}'),
+        fetcher: (uri, {headers, body, contentType}) async =>
+            const HttpResponse(401, '{}'),
       );
 
-      await expectLater(provider.search('x'), throwsA(isA<ProviderException>()));
+      await expectLater(
+        provider.search('x'),
+        throwsA(isA<ProviderException>()),
+      );
       expect(provider.snapshot.state, ProviderState.expired);
     });
 
@@ -103,7 +110,8 @@ void main() {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: credentials,
-        fetcher: (uri, {headers, body, contentType}) async => const HttpResponse(429, '{}'),
+        fetcher: (uri, {headers, body, contentType}) async =>
+            const HttpResponse(429, '{}'),
       );
 
       expect(
@@ -151,6 +159,38 @@ void main() {
       expect(provider.isDemo, isFalse);
       expect(provider.capabilities.inAppPlayback, isFalse);
       expect(provider.capabilities.officialHandoff, isTrue);
+    });
+
+    test('可恢复 SpotifyAuth 写入的令牌并用它执行真实搜索', () async {
+      final credentials = InMemoryCredentials();
+      await credentials.write(
+        spotifyTokenStorageKey,
+        SpotifyTokens(
+          accessToken: 'secure-token',
+          refreshToken: 'refresh-token',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        ).encode(),
+      );
+      final auth = SpotifyAuth(
+        clientId: 'demo-client',
+        credentials: credentials,
+        httpFetcher: disabledFetcher,
+        browserLauncher: (_) async => true,
+      );
+      final provider = SpotifyProvider(
+        clientId: 'demo-client',
+        credentials: credentials,
+        auth: auth,
+        fetcher: (uri, {headers, body, contentType}) async {
+          expect(headers?['Authorization'], 'Bearer secure-token');
+          return const HttpResponse(200, _searchJson);
+        },
+      );
+
+      expect(await provider.restoreSession(), isTrue);
+      expect(provider.snapshot.state, ProviderState.connected);
+      final tracks = await provider.search('夜空');
+      expect(tracks.single.title, '夜空中最亮的星');
     });
   });
 

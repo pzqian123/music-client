@@ -36,7 +36,14 @@ flutter doctor --android-licenses   # 一路输入 y
 
 ### 界面显示「演示数据」
 
-这是预期行为：首版只带演示 Provider。真实接入见 `docs/provider-integration.md`。
+检查是否用 `--dart-define=SPOTIFY_CLIENT_ID=...` 启动，以及当前平台是否能挂载官方网页播放器。
+未配置 Spotify 时会保留 Spotify 演示搜索；不能挂载网页播放器的平台会整体回退到演示数据。
+
+### Spotify 登录后没有结果
+
+1. 确认 Spotify Dashboard 已添加 loopback redirect URI，且路径为 `/callback`；
+2. 确认启动参数只包含客户端 ID，不需要也不应包含 client secret；
+3. 免费账号可用于搜索；若出现 401，请重新连接或检查应用是否被撤销授权。
 
 ### 点击播放后提示「该账号无客户端内播放权限」
 

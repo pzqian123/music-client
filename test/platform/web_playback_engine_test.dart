@@ -46,4 +46,52 @@ void main() {
       expect(track.preferredSource?.service, MusicService.netease);
     });
   });
+
+  group('官方播放列表', () {
+    test('解析曲目 ID、标题、艺人和当前项', () {
+      final items = parseOfficialQueue('''
+      {
+        "items": [
+          {
+            "id": "3312508535",
+            "title": "少女的祈祷",
+            "artist": "杨千嬅",
+            "duration": "03:38",
+            "selected": true
+          },
+          {
+            "id": "67467",
+            "title": "K歌之王",
+            "artist": "陈奕迅",
+            "duration": "03:42"
+          }
+        ]
+      }
+      ''');
+
+      expect(items.length, 2);
+      expect(items.first.id, '3312508535');
+      expect(items.first.title, '少女的祈祷');
+      expect(items.first.artist, '杨千嬅');
+      expect(items.first.selected, isTrue);
+    });
+
+    test('官方列表项转换为可播放网易云 Track', () {
+      final track = trackFromOfficialQueueItem(
+        const OfficialQueueItem(
+          id: '67467',
+          title: 'K歌之王',
+          artist: '陈奕迅',
+          duration: '03:42',
+        ),
+      );
+
+      expect(track.duration, const Duration(minutes: 3, seconds: 42));
+      expect(track.sourceFor(MusicService.netease)?.playable, isTrue);
+      expect(
+        track.sourceFor(MusicService.netease)?.providerTrackId,
+        '67467',
+      );
+    });
+  });
 }

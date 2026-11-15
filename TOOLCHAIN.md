@@ -1,6 +1,6 @@
 # 工具链验证记录
 
-验证时间：2026-10-31（本机 DESKTOP-Q7B00UD）
+验证时间：2026-11-15（本机 DESKTOP-Q7B00UD）
 
 ## Flutter
 
@@ -51,13 +51,6 @@ licenses: All SDK package licenses accepted
 
 | 检查项 | 结果 |
 | --- | --- |
-| `flutter build windows --debug` | **阻塞**：`Building with plugins requires symlink support`（需开启「开发人员模式」） |
-| 解除方式 | 设置 → 系统 → 开发者选项 → 开发人员模式（需 UAC，当前进程非管理员无法代做） |
-
-## Windows 构建状态
-
-| 检查项 | 结果 |
-| --- | --- |
 | 开发人员模式 | ✅ 已开启（`AllowDevelopmentWithoutDevLicense=1`，`mklink` 验证可建链接） |
 | `flutter build windows --debug` | ✅ 成功，产物 `build/windows/x64/runner/Debug/music_client.exe` |
 | 实际启动 | ✅ 已启动并截图，见 `docs/screenshots/windows-app.png` |
@@ -70,8 +63,8 @@ licenses: All SDK package licenses accepted
 | 目标 | 状态 | 证据 |
 | --- | --- | --- |
 | 静态检查 | ✅ | `flutter analyze` → No issues found |
-| 测试 | ✅ | `flutter test` → 119 passed |
-| Android APK | ✅ | `build/app/outputs/flutter-apk/app-debug.apk`（152 MB，debug，含全部 ABI） |
+| 测试 | ✅ | `flutter test` → 147 passed |
+| Android APK | ✅ | `build/app/outputs/flutter-apk/app-debug.apk`（debug，含全部 ABI） |
 | Windows 桌面 | ✅ | `build/windows/x64/runner/Debug/music_client.exe`，已启动验证 |
 | Web 预览（仅用于看界面） | ✅ | `build/web` + `tools/serve_web.js`，截图见 `docs/screenshots/` |
 
@@ -80,7 +73,8 @@ Android 首次构建踩到的坑（已修复并写入 `android/gradle.properties
 - Kotlin 增量编译在「插件源码在 C: 盘 pub 缓存、工程在 D: 盘」时报
   `this and base files have different roots` 并卡住 → `kotlin.incremental=false`。
 - 默认 30s 网络超时对不可达仓库不够快 → 调成 15s 连接/读超时。
-- AGP 9 构建需要 CMake 3.22.1，构建时自动安装到 Android SDK。
+- `flutter_inappwebview_android 1.1.3` 尚不兼容 AGP 9，项目固定使用 AGP 8.13.1 /
+  Gradle 8.14.3 / Kotlin 2.3.0；升级该插件后再重新评估 AGP 9。
 
 ## Web 预览用法
 

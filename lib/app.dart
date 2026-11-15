@@ -1,10 +1,15 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'application/music_controller.dart';
+import 'platform/io_http_fetcher.dart';
+import 'platform/secure_credentials.dart';
+import 'platform/spotify_auth.dart';
 import 'platform/web_playback_engine.dart';
 import 'presentation/app_shell.dart';
 import 'presentation/web_player_ui.dart';
@@ -12,16 +17,19 @@ import 'presentation/widgets/hidden_web_player.dart';
 import 'providers/music_provider.dart';
 import 'providers/fake_netease_provider.dart';
 import 'providers/fake_spotify_provider.dart';
+import 'providers/spotify_provider.dart';
 
 /// 演示默认 Provider 集合。
 List<MusicProvider> buildDemoProviders() => [
-      FakeSpotifyProvider(),
-      FakeNeteaseProvider(),
-    ];
+  FakeSpotifyProvider(),
+  FakeNeteaseProvider(),
+];
 
 /// 调试开关：启动即显示官方页面（仅用于自动化验证）。
-const bool _autoOpenOfficial =
-    bool.fromEnvironment('DSH_AUTO_OPEN_OFFICIAL');
+const bool _autoOpenOfficial = bool.fromEnvironment('DSH_AUTO_OPEN_OFFICIAL');
+
+/// Spotify 客户端 ID 是公开标识，通过构建参数注入；client secret 不进入客户端。
+const String _spotifyClientId = String.fromEnvironment('SPOTIFY_CLIENT_ID');
 
 /// 测试环境（flutter test）不挂 WebView，避免缺少平台通道。
 bool get webPlayerSupported {
@@ -45,9 +53,9 @@ class _MusicAppState extends State<MusicApp> {
   late final WebPlaybackEngine? _engine;
   late final WebPlayerUi _ui;
   MusicController? _ownedController;
+  SpotifyProvider? _spotifyProvider;
 
-  MusicController get _controller =>
-      widget.controller ?? _ownedController!;
+  MusicController get _controller => widget.controller ?? _ownedController!;
 
   @override
   void initState() {
@@ -65,7 +73,7 @@ class _MusicAppState extends State<MusicApp> {
       _handle = WebPlayerHandle();
       _engine = WebPlaybackEngine(bridge: HandleWebPlayerBridge(_handle!));
       _ownedController = MusicController(
-        providers: buildDemoProviders(),
+        providers: _buildProviders(webAttached: false),
         webEngine: _engine,
       );
       _engine?.start();
@@ -74,15 +82,48 @@ class _MusicAppState extends State<MusicApp> {
     _handle = WebPlayerHandle();
     _engine = WebPlaybackEngine(bridge: HandleWebPlayerBridge(_handle!));
     _ownedController = MusicController(
-      providers: buildDemoProviders(),
+      providers: _buildProviders(webAttached: true),
       webEngine: _engine,
     );
     _engine!.start();
+    unawaited(_restoreSpotifySession());
     if (_autoOpenOfficial) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _ui.open();
       });
     }
+  }
+
+  List<MusicProvider> _buildProviders({required bool webAttached}) {
+    if (!webAttached) return buildDemoProviders();
+
+    if (_spotifyClientId.isEmpty) {
+      return [FakeSpotifyProvider()];
+    }
+
+    final credentials = FlutterSecureStorageCredentials();
+    final auth = SpotifyAuth(
+      clientId: _spotifyClientId,
+      credentials: credentials,
+      httpFetcher: fetchWithIo,
+      browserLauncher: _launchExternalBrowser,
+    );
+    final provider = SpotifyProvider(
+      clientId: _spotifyClientId,
+      credentials: credentials,
+      fetcher: fetchWithIo,
+      auth: auth,
+    );
+    _spotifyProvider = provider;
+    return [provider];
+  }
+
+  Future<void> _restoreSpotifySession() async {
+    final provider = _spotifyProvider;
+    if (provider == null) return;
+    await provider.restoreSession();
+    if (!mounted) return;
+    _ownedController?.refreshProviders();
   }
 
   @override
@@ -117,19 +158,28 @@ class _MusicAppState extends State<MusicApp> {
   }
 }
 
+Future<bool> _launchExternalBrowser(Uri uri) async {
+  try {
+    return await launchUrl(uri, mode: LaunchMode.externalApplication);
+  } catch (_) {
+    return false;
+  }
+}
+
 ThemeData buildTheme() {
   const background = Color(0xFF0B0B0F);
   const surface = Color(0xFF15151B);
   const outline = Color(0xFF2A2A33);
 
-  final scheme = ColorScheme.fromSeed(
-    seedColor: const Color(0xFF1DB954),
-    brightness: Brightness.dark,
-  ).copyWith(
-    surface: background,
-    surfaceContainerHighest: surface,
-    outline: outline,
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: const Color(0xFF1DB954),
+        brightness: Brightness.dark,
+      ).copyWith(
+        surface: background,
+        surfaceContainerHighest: surface,
+        outline: outline,
+      );
 
   return ThemeData(
     useMaterial3: true,

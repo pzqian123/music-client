@@ -23,10 +23,7 @@ void main() {
     test('verifier 长度与字符集符合 RFC 7636', () {
       final verifier = generateCodeVerifier();
       expect(verifier.length, 64);
-      expect(
-        RegExp(r'^[A-Za-z0-9\-._~]+$').hasMatch(verifier),
-        isTrue,
-      );
+      expect(RegExp(r'^[A-Za-z0-9\-._~]+$').hasMatch(verifier), isTrue);
     });
 
     test('challenge 为 BASE64URL 且不含补位', () {
@@ -38,8 +35,7 @@ void main() {
 
     test('已知向量：challenge 与 verifier 一一对应', () {
       // RFC 7636 附录 B 的示例 verifier。
-      const verifier =
-          'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+      const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
       expect(
         codeChallengeFor(verifier),
         'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
@@ -62,8 +58,9 @@ void main() {
         timeout: const Duration(seconds: 5),
       );
 
-      final response = await HttpClient()
-          .getUrl(Uri.parse('${server.redirectUri}?code=abc&state=$state'));
+      final response = await HttpClient().getUrl(
+        Uri.parse('${server.redirectUri}?code=abc&state=$state'),
+      );
       await response.close();
 
       final result = await future;
@@ -129,8 +126,11 @@ void main() {
       expect(url.queryParameters['code_challenge_method'], 'S256');
       expect(url.queryParameters['code_challenge'], pkce.challenge);
       expect(url.queryParameters['state'], 'st-1');
-      expect(url.queryParameters['scope'], contains('user-modify-playback-state'));
-      expect(url.queryParameters['redirect_uri'], 'http://127.0.0.1:8080/callback');
+      expect(url.queryParameters.containsKey('scope'), isFalse);
+      expect(
+        url.queryParameters['redirect_uri'],
+        'http://127.0.0.1:8080/callback',
+      );
     });
 
     test('用授权码换取令牌并写入安全存储', () async {
@@ -232,10 +232,7 @@ void main() {
 
       expect(
         () => auth.refresh(
-          SpotifyTokens(
-            accessToken: 'a',
-            expiresAt: DateTime(2020),
-          ),
+          SpotifyTokens(accessToken: 'a', expiresAt: DateTime(2020)),
         ),
         throwsA(isA<OAuthException>()),
       );

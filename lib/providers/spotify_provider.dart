@@ -9,7 +9,9 @@ import 'dart:convert';
 
 import '../domain/lyrics.dart';
 import '../domain/models.dart';
+import '../platform/oauth_flow.dart';
 import '../platform/secure_credentials.dart';
+import '../platform/spotify_auth.dart';
 import 'http_client_port.dart';
 import 'music_provider.dart';
 
@@ -18,11 +20,13 @@ class SpotifyProvider implements MusicProvider {
     required this.clientId,
     required this.credentials,
     HttpFetcher? fetcher,
+    this.auth,
   }) : _fetcher = fetcher ?? disabledFetcher;
 
   final String? clientId;
   final SecureCredentials credentials;
   final HttpFetcher _fetcher;
+  final SpotifyAuth? auth;
 
   ProviderState _state = ProviderState.disconnected;
   String? _message;
@@ -49,11 +53,11 @@ class SpotifyProvider implements MusicProvider {
 
   @override
   ProviderSnapshot get snapshot => ProviderSnapshot(
-        service: service,
-        state: _state,
-        capabilities: _capabilities,
-        message: _message,
-      );
+    service: service,
+    state: _state,
+    capabilities: _capabilities,
+    message: _message,
+  );
 
   bool get isConfigured => (clientId ?? '').isNotEmpty;
 
@@ -67,19 +71,60 @@ class SpotifyProvider implements MusicProvider {
         kind: ProviderErrorKind.notConfigured,
       );
     }
-    _state = ProviderState.error;
-    _message = '官方授权流程尚未接入';
-    throw const ProviderException(
-      'Spotify 官方 OAuth 尚未接入，请参考 docs/provider-integration.md',
-      kind: ProviderErrorKind.notConfigured,
-    );
+    final spotifyAuth = auth;
+    if (spotifyAuth == null) {
+      _state = ProviderState.error;
+      _message = 'Spotify 授权未初始化';
+      throw const ProviderException(
+        'Spotify 授权未初始化，请检查应用启动配置',
+        kind: ProviderErrorKind.notConfigured,
+      );
+    }
+
+    _state = ProviderState.connecting;
+    _message = null;
+    try {
+      await spotifyAuth.signIn();
+      _state = ProviderState.connected;
+    } on OAuthException catch (error) {
+      _state = ProviderState.error;
+      _message = error.message;
+      throw ProviderException(
+        error.message,
+        kind: ProviderErrorKind.unauthorized,
+      );
+    }
   }
 
   @override
   Future<void> disconnect() async {
+    if (auth != null) {
+      await auth!.signOut();
+    }
     await credentials.delete(service.storageKey);
     _state = ProviderState.disconnected;
     _message = null;
+  }
+
+  /// 应用启动时恢复安全存储中的登录状态；无令牌时保持未连接。
+  Future<bool> restoreSession() async {
+    final spotifyAuth = auth;
+    if (spotifyAuth == null || !isConfigured) return false;
+    try {
+      final tokens = await spotifyAuth.ensureFresh();
+      if (tokens == null) {
+        _state = ProviderState.disconnected;
+        _message = null;
+        return false;
+      }
+      _state = ProviderState.connected;
+      _message = null;
+      return true;
+    } on OAuthException catch (error) {
+      _state = ProviderState.expired;
+      _message = error.message;
+      return false;
+    }
   }
 
   @override
@@ -87,7 +132,7 @@ class SpotifyProvider implements MusicProvider {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return const [];
 
-    final token = await credentials.read(service.storageKey);
+    var token = await _accessToken();
     if (token == null || token.isEmpty) {
       _state = ProviderState.expired;
       throw const ProviderException(
@@ -103,17 +148,37 @@ class SpotifyProvider implements MusicProvider {
       'market': 'from_token',
     });
 
-    final response = await _fetcher(
+    var response = await _fetcher(
       uri,
       headers: {'Authorization': 'Bearer $token'},
     );
 
+    // 令牌可能在到期前被服务端撤销。刷新一次后重试，避免用户立即重新登录。
+    if (response.statusCode == 401 && auth != null) {
+      final current = await auth!.loadTokens();
+      if (current != null) {
+        try {
+          final refreshed = await auth!.refresh(current);
+          token = refreshed.accessToken;
+          response = await _fetcher(
+            uri,
+            headers: {'Authorization': 'Bearer $token'},
+          );
+        } on OAuthException catch (error) {
+          _state = ProviderState.expired;
+          _message = error.message;
+        }
+      }
+    }
+
     switch (response.statusCode) {
       case 200:
         _state = ProviderState.connected;
+        _message = null;
         return _parseTracks(response.body);
       case 401:
         _state = ProviderState.expired;
+        _message = 'Spotify 授权已过期，请重新连接';
         throw const ProviderException(
           'Spotify 授权已过期，请重新连接',
           kind: ProviderErrorKind.unauthorized,
@@ -133,6 +198,21 @@ class SpotifyProvider implements MusicProvider {
           'Spotify 请求失败（HTTP ${response.statusCode}）',
           kind: ProviderErrorKind.unknown,
         );
+    }
+  }
+
+  Future<String?> _accessToken() async {
+    final spotifyAuth = auth;
+    if (spotifyAuth == null) {
+      return credentials.read(service.storageKey);
+    }
+    try {
+      final tokens = await spotifyAuth.ensureFresh();
+      return tokens?.accessToken;
+    } on OAuthException catch (error) {
+      _state = ProviderState.expired;
+      _message = error.message;
+      return null;
     }
   }
 

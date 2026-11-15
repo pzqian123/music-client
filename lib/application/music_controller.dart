@@ -12,6 +12,7 @@ import '../domain/playback.dart';
 import '../platform/official_handoff.dart';
 import '../platform/secure_credentials.dart';
 import '../platform/web_playback_engine.dart';
+import '../platform/web_player_engine.dart';
 import '../providers/music_provider.dart';
 import 'playback_clock.dart';
 
@@ -63,6 +64,18 @@ class SearchState {
   }
 }
 
+class _ProviderSearchBatch {
+  const _ProviderSearchBatch({
+    required this.service,
+    this.tracks = const [],
+    this.error,
+  });
+
+  final MusicService service;
+  final List<ProviderTrack> tracks;
+  final Object? error;
+}
+
 class MusicController extends ChangeNotifier {
   MusicController({
     required List<MusicProvider> providers,
@@ -70,13 +83,12 @@ class MusicController extends ChangeNotifier {
     SecureCredentials? credentials,
     OfficialHandoff? handoff,
     this.webEngine,
-  })  : providers = List.unmodifiable(providers),
-        _clock = clock ?? TimerClock(),
-        _credentials = credentials ?? InMemoryCredentials(),
-        _handoff = handoff ?? const UrlLauncherHandoff() {
-    _providerStates = {
-      for (final provider in this.providers) provider.service: provider.snapshot,
-    };
+  }) : providers = List.unmodifiable(providers),
+       _clock = clock ?? TimerClock(),
+       _credentials = credentials ?? InMemoryCredentials(),
+       _handoff = handoff ?? const UrlLauncherHandoff() {
+    _providerStates = const {};
+    _refreshProviderStates();
     _clockSubscription = _clock.positions.listen(_onClockTick);
     webEngine?.addListener(_onWebEngineChanged);
   }
@@ -104,8 +116,15 @@ class MusicController extends ChangeNotifier {
 
   /// 当前播放是否由隐藏的官方网页驱动。
   bool _webMode = false;
+  bool _officialQueueMode = false;
+  bool _queueLoading = false;
+  int _queueSeq = 0;
+  int _webAssetSeq = 0;
+  bool _disposed = false;
 
   bool get usesWebPlayer => _webMode && (webEngine?.isAttached ?? false);
+  bool get usesOfficialQueue => _officialQueueMode;
+  bool get queueLoading => _queueLoading;
 
   StreamSubscription<Duration>? _clockSubscription;
 
@@ -133,7 +152,8 @@ class MusicController extends ChangeNotifier {
 
   bool _usedOfficialSearch = false;
 
-  ProviderSnapshot? snapshotOf(MusicService service) => _providerStates[service];
+  ProviderSnapshot? snapshotOf(MusicService service) =>
+      _providerStates[service];
 
   MusicProvider? _providerFor(MusicService? service) {
     if (service == null) return null;
@@ -144,9 +164,24 @@ class MusicController extends ChangeNotifier {
   }
 
   void _refreshProviderStates() {
-    _providerStates = {
+    final states = <MusicService, ProviderSnapshot>{
       for (final provider in providers) provider.service: provider.snapshot,
     };
+    if (webEngine?.isAttached ?? false) {
+      states[MusicService.netease] = const ProviderSnapshot(
+        service: MusicService.netease,
+        state: ProviderState.connected,
+        capabilities: ProviderCapabilities(
+          search: true,
+          metadata: true,
+          lyrics: true,
+          inAppPlayback: true,
+          officialHandoff: true,
+        ),
+        message: '由官方网页播放器提供',
+      );
+    }
+    _providerStates = states;
   }
 
   Future<void> searchFor(String query) async {
@@ -163,85 +198,24 @@ class MusicController extends ChangeNotifier {
 
     final stopwatch = Stopwatch()..start();
 
-    // 网页播放引擎可用时，搜索直接解析官方结果（真实数据）。
     final engine = webEngine;
-    if (engine != null && engine.isAttached) {
-      try {
-        final tracks = await engine.searchNetease(trimmed);
-        if (seq != _searchSeq) return;
-        stopwatch.stop();
-        _usedOfficialSearch = true;
+    final officialEnabled = engine != null && engine.isAttached;
+    final futures = <Future<_ProviderSearchBatch>>[];
 
-        // 批量补封面（一次请求覆盖列表）。
-        final ids = tracks
-            .map((track) => track.sourceFor(MusicService.netease)?.providerTrackId)
-            .whereType<String>()
-            .toList();
-        final covers = await engine.fetchCovers(ids);
-        if (seq != _searchSeq) return;
-        final withCovers = [
-          for (final track in tracks)
-            covers[track.sourceFor(MusicService.netease)?.providerTrackId] == null
-                ? track
-                : track.copyWith(
-                    artworkUrl:
-                        covers[track.sourceFor(MusicService.netease)!.providerTrackId],
-                  ),
-        ];
-
-        // 由官方页面抓取前若干首的封面字节，规避图床的 UA 拦截。
-        final byteRequests = <Map<String, String>>[
-          for (final track in withCovers.take(10))
-            if (track.artworkUrl != null)
-              {
-                'id': track.sourceFor(MusicService.netease)?.providerTrackId ?? '',
-                'url': track.artworkUrl ?? '',
-              },
-        ]..removeWhere((item) => item['id']!.isEmpty);
-        if (byteRequests.isNotEmpty) {
-          final bytes = await engine.fetchCoverBytes(byteRequests);
-          if (seq != _searchSeq) return;
-          for (final entry in bytes.entries) {
-            _coverBytes[entry.key] = Uint8List.fromList(entry.value);
-          }
-        }
-
-        _search = SearchState(
-          query: trimmed,
-          loading: false,
-          results: withCovers,
-          errors: const {},
-          elapsed: stopwatch.elapsed,
-        );
-        notifyListeners();
-        return;
-      } catch (error) {
-        if (seq != _searchSeq) return;
-        _search = SearchState(
-          query: trimmed,
-          loading: false,
-          results: const [],
-          errors: {
-            MusicService.netease: ProviderError(
-              service: MusicService.netease,
-              message: '官方页面搜索失败：$error',
-            ),
-          },
-          elapsed: stopwatch.elapsed,
-        );
-        notifyListeners();
-        return;
-      }
+    if (officialEnabled) {
+      futures.add(_searchOfficialNetease(engine, trimmed));
     }
 
-    final futures = providers.map((provider) async {
-      try {
-        final tracks = await provider.search(trimmed);
-        return MapEntry<MusicService, Object>(provider.service, tracks);
-      } catch (error) {
-        return MapEntry<MusicService, Object>(provider.service, error);
-      }
-    }).toList();
+    // 官方网页模式只合并真实 Provider，避免演示目录混入线上搜索结果。
+    final activeProviders = officialEnabled
+        ? providers.where(
+            (provider) =>
+                !provider.isDemo && provider.service != MusicService.netease,
+          )
+        : providers;
+    for (final provider in activeProviders) {
+      futures.add(_searchProvider(provider, trimmed));
+    }
 
     final responses = await Future.wait(futures);
     if (seq != _searchSeq) return; // 竞态保护：丢弃过期结果
@@ -249,33 +223,116 @@ class MusicController extends ChangeNotifier {
     final collected = <ProviderTrack>[];
     final errors = <MusicService, ProviderError>{};
     for (final response in responses) {
-      final value = response.value;
-      if (value is List<ProviderTrack>) {
-        collected.addAll(value);
-      } else if (value is ProviderException) {
-        errors[response.key] = ProviderError(
-          service: response.key,
-          message: value.message,
-        );
+      if (response.error == null) {
+        collected.addAll(response.tracks);
+        if (officialEnabled && response.service == MusicService.netease) {
+          _usedOfficialSearch = true;
+        }
       } else {
-        errors[response.key] = ProviderError(
-          service: response.key,
-          message: '加载失败，请重试',
+        final error = response.error!;
+        errors[response.service] = ProviderError(
+          service: response.service,
+          message: error is ProviderException
+              ? error.message
+              : response.service == MusicService.netease
+              ? '官方页面搜索失败：$error'
+              : '加载失败，请重试',
         );
       }
     }
-    stopwatch.stop();
 
     final merged = mergeProviderTracks(collected);
+    var tracks = merged.tracks;
+
+    // 合并后再补网易云封面，保证 Spotify + 网易云同曲不会因先取封面而错过合并。
+    if (officialEnabled) {
+      final ids = [
+        for (final track in tracks)
+          track.sourceFor(MusicService.netease)?.providerTrackId,
+      ].whereType<String>().take(12).toList();
+      if (ids.isNotEmpty) {
+        final covers = await engine.fetchCovers(ids);
+        if (seq != _searchSeq) return;
+        tracks = [
+          for (final track in tracks)
+            if (track.sourceFor(MusicService.netease)?.providerTrackId
+                case final id? when covers[id] != null)
+              track.copyWith(artworkUrl: covers[id])
+            else
+              track,
+        ];
+
+        final byteRequests = <Map<String, String>>[
+          for (final track in tracks)
+            if (track.sourceFor(MusicService.netease)?.providerTrackId
+                case final id? when (track.artworkUrl ?? '').isNotEmpty)
+              {'id': id, 'url': track.artworkUrl!},
+        ].take(10).toList();
+        if (byteRequests.isNotEmpty) {
+          final bytes = await engine.fetchCoverBytes(byteRequests);
+          if (seq != _searchSeq) return;
+          for (final entry in bytes.entries) {
+            _coverBytes[entry.key] = Uint8List.fromList(entry.value);
+          }
+        }
+      }
+    }
+
+    stopwatch.stop();
     _search = SearchState(
       query: trimmed,
       loading: false,
-      results: merged.tracks,
+      results: tracks,
       errors: errors,
       elapsed: stopwatch.elapsed,
     );
     _refreshProviderStates();
     notifyListeners();
+  }
+
+  Future<_ProviderSearchBatch> _searchProvider(
+    MusicProvider provider,
+    String query,
+  ) async {
+    try {
+      return _ProviderSearchBatch(
+        service: provider.service,
+        tracks: await provider.search(query),
+      );
+    } catch (error) {
+      return _ProviderSearchBatch(service: provider.service, error: error);
+    }
+  }
+
+  Future<_ProviderSearchBatch> _searchOfficialNetease(
+    WebPlaybackEngine engine,
+    String query,
+  ) async {
+    try {
+      final tracks = await engine.searchNetease(query);
+      return _ProviderSearchBatch(
+        service: MusicService.netease,
+        tracks: [
+          for (final track in tracks)
+            if (track.sourceFor(MusicService.netease) case final source?)
+              ProviderTrack(
+                service: MusicService.netease,
+                providerTrackId: source.providerTrackId,
+                title: track.title,
+                artist: track.artist,
+                album: track.album,
+                duration: track.duration,
+                artworkUrl: track.artworkUrl,
+                accentColor: track.accentColor,
+                versionMarkers: track.versionMarkers,
+                officialHandoffUri: source.officialHandoffUri,
+                playable: source.playable,
+              ),
+        ],
+      );
+    } catch (error) {
+      return _ProviderSearchBatch(service: MusicService.netease, error: error);
+    }
   }
 
   /// 曲目是否有可用的网易云来源且隐藏播放器就绪。
@@ -300,8 +357,7 @@ class MusicController extends ChangeNotifier {
 
   Future<void> selectTrack(Track track, {MusicService? service}) async {
     // 队列去重：同一首已在队列里就跳过去，不再追加一条。
-    final existing =
-        _playback.queue.indexWhere((item) => item.id == track.id);
+    final existing = _playback.queue.indexWhere((item) => item.id == track.id);
     if (existing >= 0) {
       _playback = _machine.playAt(_playback, existing);
       notifyListeners();
@@ -353,39 +409,231 @@ class MusicController extends ChangeNotifier {
     );
     notifyListeners();
 
-    // 真实曲目歌词：从官方页面取 LRC（带时间戳），驱动逐行同步。
-    final source = track.sourceFor(MusicService.netease);
-    if (source != null) {
-      _lyrics = await engine.fetchLyrics(source.providerTrackId);
-      notifyListeners();
+    await _loadWebTrackAssets(track);
+  }
 
-      // 队列里的封面：播放到哪首就补哪首的字节（搜索结果只预抓了前 10 条）。
-      if (!_coverBytes.containsKey(source.providerTrackId) &&
-          (track.artworkUrl ?? '').isNotEmpty) {
-        final bytes = await engine.fetchCoverBytes([
-          {'id': source.providerTrackId, 'url': track.artworkUrl!},
-        ]);
-        final data = bytes[source.providerTrackId];
-        if (data != null && data.isNotEmpty) {
-          _coverBytes[source.providerTrackId] = Uint8List.fromList(data);
-          notifyListeners();
-        }
+  /// 加载当前网页曲目的歌词与封面；切歌期间丢弃已经过期的异步结果。
+  Future<void> _loadWebTrackAssets(Track track) async {
+    final engine = webEngine;
+    final source = track.sourceFor(MusicService.netease);
+    if (engine == null || source == null) {
+      _lyrics = null;
+      return;
+    }
+    final seq = ++_webAssetSeq;
+    final lyrics = await engine.fetchLyrics(source.providerTrackId);
+    if (_disposed ||
+        seq != _webAssetSeq ||
+        _playback.current?.id != track.id) {
+      return;
+    }
+    _lyrics = lyrics;
+    notifyListeners();
+
+    // 队列里的封面：播放到哪首就补哪首的字节（搜索结果只预抓了前 10 条）。
+    var coverUrl = track.artworkUrl ?? '';
+    if (coverUrl.isEmpty && source.providerTrackId.isNotEmpty) {
+      coverUrl = await engine.fetchCover(source.providerTrackId) ?? '';
+      if (_disposed ||
+          seq != _webAssetSeq ||
+          _playback.current?.id != track.id) {
+        return;
+      }
+    }
+    if (!_coverBytes.containsKey(source.providerTrackId) &&
+        coverUrl.isNotEmpty) {
+      final bytes = await engine.fetchCoverBytes([
+        {'id': source.providerTrackId, 'url': coverUrl},
+      ]);
+      if (_disposed ||
+          seq != _webAssetSeq ||
+          _playback.current?.id != track.id) {
+        return;
+      }
+      final data = bytes[source.providerTrackId];
+      if (data != null && data.isNotEmpty) {
+        _coverBytes[source.providerTrackId] = Uint8List.fromList(data);
+        notifyListeners();
       }
     }
   }
 
-  void _onWebEngineChanged() {
-    if (!_webMode) return;
-    final state = webEngine?.state;
-    if (state == null || !state.hasMedia) return;
-    final nextStatus = _playback.status == PlaybackStatus.loading
-        ? (state.paused ? PlaybackStatus.paused : PlaybackStatus.playing)
-        : (state.paused ? PlaybackStatus.paused : PlaybackStatus.playing);
-    _playback = _playback.copyWith(
+  /// 读取并接管网易云官方播放列表；只在网页播放模式下生效。
+  Future<void> refreshQueue() async {
+    final engine = webEngine;
+    if (!_webMode || engine == null || !engine.isAttached) return;
+    final seq = ++_queueSeq;
+    _queueLoading = true;
+    notifyListeners();
+    final tracks = await engine.fetchNeteaseQueue();
+    if (_disposed || seq != _queueSeq) return;
+    _queueLoading = false;
+    if (tracks.isEmpty) {
+      notifyListeners();
+      return;
+    }
+
+    final state = engine.state;
+    var index = state.nowPlayingId.isEmpty
+        ? -1
+        : tracks.indexWhere(
+            (track) =>
+                track.sourceFor(MusicService.netease)?.providerTrackId ==
+                state.nowPlayingId,
+          );
+    if (index < 0) {
+      final label = _webStateTitle(state);
+      if (label.isNotEmpty) {
+        index = tracks.indexWhere((track) => track.title == label);
+      }
+    }
+    _officialQueueMode = true;
+    _playback = PlaybackState(
+      queue: tracks,
+      queueIndex: index,
       position: state.position,
-      status: nextStatus,
+      status: state.paused ? PlaybackStatus.paused : PlaybackStatus.playing,
+      activeService: MusicService.netease,
     );
     notifyListeners();
+  }
+
+  void _onWebEngineChanged() {
+    _refreshProviderStates();
+    if (!_webMode) {
+      notifyListeners();
+      return;
+    }
+    final state = webEngine?.state;
+    if (state == null || !state.hasMedia) return;
+    // 正在打开新曲目时，网页可能还会短暂上报上一首状态，不能据此回滚界面。
+    if (_playback.status == PlaybackStatus.loading) return;
+    if (state.ended) {
+      _handleTrackCompleted(position: state.duration);
+      return;
+    }
+
+    final actualIndex = _queueIndexForWebState(state);
+    if (actualIndex != null && actualIndex != _playback.queueIndex) {
+      final track = _playback.queue[actualIndex];
+      _playback = PlaybackState(
+        queue: _playback.queue,
+        queueIndex: actualIndex,
+        position: state.position,
+        status:
+            state.paused ? PlaybackStatus.paused : PlaybackStatus.playing,
+        activeService: MusicService.netease,
+      );
+      _lyrics = null;
+      notifyListeners();
+      unawaited(_loadWebTrackAssets(track));
+      return;
+    }
+    if (actualIndex == null) {
+      final external = _externalWebTrack(state);
+      if (external != null) {
+        final queue = List<Track>.from(_playback.queue);
+        final insertAt = (_playback.queueIndex + 1).clamp(0, queue.length);
+        queue.insert(insertAt, external);
+        _playback = PlaybackState(
+          queue: queue,
+          queueIndex: insertAt,
+          position: state.position,
+          status:
+              state.paused ? PlaybackStatus.paused : PlaybackStatus.playing,
+          activeService: MusicService.netease,
+        );
+        _lyrics = null;
+        notifyListeners();
+        unawaited(_loadWebTrackAssets(external));
+        return;
+      }
+    }
+
+    _playback = _playback.copyWith(
+      position: state.position,
+      status: state.paused ? PlaybackStatus.paused : PlaybackStatus.playing,
+      clearBlock: true,
+      message: '',
+    );
+    notifyListeners();
+  }
+
+  /// 官方网页会自行播放下一首；优先用歌曲 ID，回退到 Media Session / DOM 标题。
+  int? _queueIndexForWebState(WebPlayerState state) {
+    final actualId = state.nowPlayingId.trim();
+    if (actualId.isNotEmpty) {
+      for (var i = 0; i < _playback.queue.length; i++) {
+        final source = _playback.queue[i].sourceFor(MusicService.netease);
+        if (source?.providerTrackId == actualId) return i;
+      }
+    }
+
+    final label = _webStateTitle(state);
+    final actual = label.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+    if (actual.isEmpty) return null;
+
+    bool fullMatch(Track track) {
+      final expected =
+          track.title.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+      return expected.isNotEmpty && actual.contains(expected);
+    }
+
+    bool durationMatches(Track track) {
+      if (state.duration <= Duration.zero ||
+          track.duration <= Duration.zero) {
+        return true;
+      }
+      return (state.duration - track.duration).inSeconds.abs() <= 10;
+    }
+
+    for (var i = 0; i < _playback.queue.length; i++) {
+      final track = _playback.queue[i];
+      if (fullMatch(track) && durationMatches(track)) return i;
+    }
+
+    final actualBase = normalizeTitle(label).replaceAll(RegExp(r'\s+'), '');
+    if (actualBase.isEmpty) return null;
+    for (var i = 0; i < _playback.queue.length; i++) {
+      final track = _playback.queue[i];
+      final expectedBase = normalizeTitle(track.title);
+      if (actualBase.contains(expectedBase) && durationMatches(track)) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  String _webStateTitle(WebPlayerState state) =>
+      state.mediaSessionTitle.trim().isNotEmpty
+      ? state.mediaSessionTitle.trim()
+      : state.nowPlaying.trim();
+
+  /// 网页自行播放推荐曲时可能不在应用队列中；把它作为新的真实来源接入队列。
+  Track? _externalWebTrack(WebPlayerState state) {
+    final title = _webStateTitle(state);
+    final id = state.nowPlayingId.trim();
+    if (title.isEmpty && id.isEmpty) return null;
+    final artist = state.mediaSessionArtist.trim();
+    final album = state.mediaSessionAlbum.trim();
+    final source = TrackSource(
+      service: MusicService.netease,
+      providerTrackId: id,
+      playable: id.isNotEmpty,
+      officialHandoffUri: id.isEmpty
+          ? null
+          : Uri.tryParse('https://music.163.com/song?id=$id'),
+    );
+    return Track(
+      id: id.isNotEmpty
+          ? 'netease-web-$id'
+          : 'netease-web-${title.hashCode}-${artist.hashCode}',
+      title: title.isEmpty ? '网易云音乐当前曲目' : title,
+      artist: artist.isEmpty ? '网易云音乐' : artist,
+      album: album,
+      duration: state.duration,
+      sources: [source],
+    );
   }
 
   /// 拖动进度（网页播放模式下真实生效）。
@@ -418,6 +666,37 @@ class MusicController extends ChangeNotifier {
     final track = _playback.queue[index];
     _playback = _machine.playAt(_playback, index);
     notifyListeners();
+
+    if (_officialQueueMode && (webEngine?.isAttached ?? false)) {
+      final source = track.sourceFor(MusicService.netease);
+      final ok = source == null
+          ? false
+          : await webEngine!.playNeteaseQueueItem(
+              source.providerTrackId,
+            );
+      if (!ok) {
+        _playback = _machine.block(
+          _playback,
+          BlockReason.notSupported,
+          '官方播放列表无法切换到该曲目',
+        );
+        notifyListeners();
+        return;
+      }
+      final state = webEngine!.state;
+      _playback = _playback.copyWith(
+        position: state.position,
+        status: state.paused
+            ? PlaybackStatus.paused
+            : PlaybackStatus.playing,
+        clearBlock: true,
+        message: '',
+      );
+      _lyrics = null;
+      notifyListeners();
+      await _loadWebTrackAssets(track);
+      return;
+    }
     await _playTrack(track);
   }
 
@@ -428,7 +707,12 @@ class MusicController extends ChangeNotifier {
     final position = _playback.position;
     _playback = _machine.switchSource(_playback, service);
     notifyListeners();
-    await _startPlayback(track, service, resetPosition: false, keepPosition: position);
+    await _startPlayback(
+      track,
+      service,
+      resetPosition: false,
+      keepPosition: position,
+    );
   }
 
   Future<void> _startPlayback(
@@ -467,7 +751,9 @@ class MusicController extends ChangeNotifier {
         return;
       }
 
-      final start = resetPosition ? Duration.zero : (keepPosition ?? Duration.zero);
+      final start = resetPosition
+          ? Duration.zero
+          : (keepPosition ?? Duration.zero);
       _playback = PlaybackState(
         queue: _playback.queue,
         queueIndex: _playback.queueIndex,
@@ -554,6 +840,10 @@ class MusicController extends ChangeNotifier {
   Future<void> next() async {
     if (_playback.queue.isEmpty) return;
     if (!_playback.hasNext) return;
+    if (_officialQueueMode) {
+      await playAt(_playback.queueIndex + 1);
+      return;
+    }
     final target = _playback.queue[_playback.queueIndex + 1];
     _playback = _machine.next(_playback);
     notifyListeners();
@@ -562,13 +852,25 @@ class MusicController extends ChangeNotifier {
 
   Future<void> previous() async {
     if (_playback.queue.isEmpty) return;
+    if (_officialQueueMode) {
+      if (_playback.position > const Duration(seconds: 3)) {
+        await seekTo(Duration.zero);
+      } else if (_playback.hasPrevious) {
+        await playAt(_playback.queueIndex - 1);
+      } else {
+        await seekTo(Duration.zero);
+      }
+      return;
+    }
     final wasPlaying = _playback.status == PlaybackStatus.playing;
     final beforeIndex = _playback.queueIndex;
     _playback = _machine.previous(_playback);
     final track = _playback.current;
     if (track == null) return;
 
-    if (_playback.queueIndex == beforeIndex && _playback.position == Duration.zero && wasPlaying) {
+    if (_playback.queueIndex == beforeIndex &&
+        _playback.position == Duration.zero &&
+        wasPlaying) {
       // 只是回到本曲开头：网页播放模式下要真正 seek 回 0。
       if (_webMode && (webEngine?.isAttached ?? false)) {
         await webEngine!.seek(Duration.zero);
@@ -583,8 +885,9 @@ class MusicController extends ChangeNotifier {
   }
 
   void toggleImmersive() {
-    _viewMode =
-        _viewMode == ViewMode.split ? ViewMode.immersive : ViewMode.split;
+    _viewMode = _viewMode == ViewMode.split
+        ? ViewMode.immersive
+        : ViewMode.split;
     notifyListeners();
   }
 
@@ -609,7 +912,7 @@ class MusicController extends ChangeNotifier {
     if (track == null) return null;
     final source =
         track.sourceFor(_playback.activeService ?? MusicService.spotify) ??
-            track.preferredSource;
+        track.preferredSource;
     return source?.officialHandoffUri;
   }
 
@@ -618,12 +921,33 @@ class MusicController extends ChangeNotifier {
     final track = _playback.current;
     if (track == null) return;
     final clamped = position > track.duration ? track.duration : position;
+    if (track.duration > Duration.zero && clamped >= track.duration) {
+      _handleTrackCompleted(position: track.duration);
+      return;
+    }
     _playback = _playback.copyWith(position: clamped);
+    notifyListeners();
+  }
+
+  void _handleTrackCompleted({Duration? position}) {
+    final track = _playback.current;
+    if (track == null) return;
+    if (_playback.hasNext) {
+      _clock.pause();
+      unawaited(next());
+      return;
+    }
+    _clock.pause();
+    _playback = _playback.copyWith(
+      position: position ?? track.duration,
+      status: PlaybackStatus.paused,
+    );
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
     webEngine?.removeListener(_onWebEngineChanged);
     _clockSubscription?.cancel();
     unawaited(_clock.dispose());
