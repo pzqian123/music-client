@@ -57,35 +57,48 @@ class _WindowTitleBarState extends State<WindowTitleBar> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final showLabel = constraints.maxWidth >= 520;
-            return Row(
+            return Stack(
               children: [
-                const SizedBox(width: 14),
-                Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary
-                        .withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(7),
-                  ),
-                  child: Icon(
-                    Icons.graphic_eq_rounded,
-                    size: 15,
-                    color: Theme.of(context).colorScheme.primary,
+                Positioned(
+                  left: 14,
+                  top: 0,
+                  bottom: 0,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 22,
+                        height: 22,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primary
+                              .withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Icon(
+                          Icons.graphic_eq_rounded,
+                          size: 15,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      if (showLabel) ...[
+                        const SizedBox(width: 9),
+                        const Text(
+                          '音乐聚合',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                if (showLabel) ...[
-                  const SizedBox(width: 9),
-                  const Text(
-                    '音乐聚合',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ],
-                Expanded(
+                Positioned(
+                  left: showLabel ? 105 : 48,
+                  right: 138,
+                  top: 0,
+                  bottom: 0,
                   child: GestureDetector(
                     key: const Key('window-drag-region'),
                     behavior: HitTestBehavior.opaque,
@@ -97,30 +110,41 @@ class _WindowTitleBarState extends State<WindowTitleBar> {
                     },
                   ),
                 ),
-                _WindowCircleButton(
-                  key: const Key('window-minimize'),
-                  tooltip: '最小化',
-                  icon: Icons.remove,
-                  hoverColor: const Color(0xFF3A3A42),
-                  onPressed: widget.windowService.minimize,
+                Positioned(
+                  right: 8,
+                  top: 2,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _WindowCircleButton(
+                        key: const Key('window-minimize'),
+                        tooltip: '最小化',
+                        icon: Icons.remove,
+                        baseColor: const Color(0xFF24242C),
+                        hoverColor: const Color(0xFF3A3A42),
+                        onPressed: widget.windowService.minimize,
+                      ),
+                      _WindowCircleButton(
+                        key: const Key('window-maximize'),
+                        tooltip: _maximized ? '还原' : '最大化',
+                        icon: _maximized
+                            ? Icons.filter_none_rounded
+                            : Icons.crop_square_rounded,
+                        baseColor: const Color(0xFF1E3025),
+                        hoverColor: const Color(0xFF275C3A),
+                        onPressed: _toggleMaximize,
+                      ),
+                      _WindowCircleButton(
+                        key: const Key('window-close'),
+                        tooltip: '关闭',
+                        icon: Icons.close,
+                        baseColor: const Color(0xFF352226),
+                        hoverColor: const Color(0xFF8F3438),
+                        onPressed: widget.windowService.close,
+                      ),
+                    ],
+                  ),
                 ),
-                _WindowCircleButton(
-                  key: const Key('window-maximize'),
-                  tooltip: _maximized ? '还原' : '最大化',
-                  icon: _maximized
-                      ? Icons.filter_none_rounded
-                      : Icons.crop_square_rounded,
-                  hoverColor: const Color(0xFF275C3A),
-                  onPressed: _toggleMaximize,
-                ),
-                _WindowCircleButton(
-                  key: const Key('window-close'),
-                  tooltip: '关闭',
-                  icon: Icons.close,
-                  hoverColor: const Color(0xFF8F3438),
-                  onPressed: widget.windowService.close,
-                ),
-                const SizedBox(width: 10),
               ],
             );
           },
@@ -135,12 +159,14 @@ class _WindowCircleButton extends StatefulWidget {
     super.key,
     required this.tooltip,
     required this.icon,
+    required this.baseColor,
     required this.hoverColor,
     required this.onPressed,
   });
 
   final String tooltip;
   final IconData icon;
+  final Color baseColor;
   final Color hoverColor;
   final Future<void> Function() onPressed;
 
@@ -176,15 +202,9 @@ class _WindowCircleButtonState extends State<_WindowCircleButton> {
                   height: 32,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _hovered
-                        ? widget.hoverColor
-                        : Colors.white.withValues(alpha: 0.055),
+                    color: _hovered ? widget.hoverColor : widget.baseColor,
                   ),
-                  child: Icon(
-                    widget.icon,
-                    size: 14,
-                    color: _hovered ? Colors.white : Colors.white70,
-                  ),
+                  child: Icon(widget.icon, size: 14, color: Colors.white),
                 ),
               ),
             ),
