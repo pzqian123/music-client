@@ -146,42 +146,45 @@ coveredLater  paused=false  24531ms         ← 覆盖期间继续推进 2502ms
 
 | 文件 | 作用 |
 | --- | --- |
-| `lib/platform/web_player_scripts.dart` | 注入用的 JS：状态探测、播放/暂停、跳转、音量 |
+| `lib/platform/web_player_scripts.dart` | 注入用的 JS：媒体元素登记、状态探测、播放/暂停、跳转、音量 |
+| `lib/platform/spotify_web_scripts.dart` | Spotify 专用脚本：搜索页解析、曲目页起播、登录探测 |
+| `lib/platform/web_playback_engine.dart` | 把隐藏页面封装成可测试的播放后端（每服务一个实例） |
 | `lib/platform/web_player_engine.dart` | 纯 Dart 状态模型 + 两家服务的入口/深链接适配 |
 | `lib/platform/pkce.dart`、`oauth_flow.dart`、`spotify_auth.dart` | Spotify 官方 PKCE 登录（回环回调） |
 | `lib/presentation/widgets/hidden_web_player.dart` | 隐藏/显示的 WebView 宿主 + 控制句柄 |
-| `tool/web_player_demo.dart` | 可运行 Demo：登录 → 隐藏 → 用我们的控件播放/拖动 |
 
 ## 已知风险与对策
 
 | 风险 | 现状 | 对策 |
 | --- | --- | --- |
 | 自动播放策略阻止 `play()` | 已在 WebView 设置 `mediaPlaybackRequiresUserGesture: false` | 仍失败时，可在 WebView2 启动参数加 `--autoplay-policy=no-user-gesture-required` |
-| 隐藏后 Chromium 节流 | 未验证 | 保留 2×2 可视区域（不用 `Offstage`）；必要时定期调用 `window.focus()` |
+| 隐藏后 Chromium 节流 | 已验证不节流 | WebView2 启动参数 `--disable-features=CalculateNativeWinOcclusion`，且不卸载 WebView |
 | 页面改版导致选择器失效 | 已规避（操作媒体元素而非 DOM） | 保留调试面板，可现场注入 JS 检查 |
 | 服务方检测到嵌入浏览器 | 未观察到拦截 | 不做 UA 伪装；若被拦，明示用户并回退官方 App |
 | 版权与条款 | 播放发生在官方页面内，应用不提取音频流 | 不做解密/抓流；仅作为"官方页面的遥控器" |
-| Spotify 需要 Premium | 已知 | 未登录/非 Premium 时给出明确提示 |
+| Spotify 需要 Premium | 播放不需要（网页播放器可用免费账号）；Web API 的 Development Mode 应用需要 | 未登录时给出明确提示 |
 
-## 下一步（需要真实账号）
-
-1. 用 `tool/web_player_demo.dart` 打开网易云页面，登录后点「隐藏播放器」，输入歌曲 ID 播放，观察：
-   - 隐藏后音频是否继续
-   - 进度条拖动是否生效
-   - 状态回读是否连续（是否有跳变）
-2. Spotify 同样流程（需 Premium），重点看 DRM 解密在隐藏状态下是否仍工作。
-3. 验证通过后，把 `WebPlayerHandle` 接进 `MusicController`，让播放页直接驱动它。
-
-## 复现命令
+## 复现与验证
 
 ```powershell
-# 需要：Flutter SDK、VS2026（含 C++ 桌面工作负载）、nuget.exe 在 PATH 中
-flutter build windows --debug -t tool/web_player_demo.dart
+# 需要：Flutter SDK、VS（含 C++ 桌面工作负载）、nuget.exe 在 PATH 中
+flutter build windows --debug
 build\windows\x64\runner\Debug\music_client.exe
 ```
 
-构建前提（本机已处理）：
+端到端验证可以打开 WebView2 的调试端口，再用仓库里的脚本查看官方页面状态：
+
+```powershell
+$env:DSH_WEBVIEW_DEBUG_PORT = "9223"
+.\build\windows\x64\runner\Debug\music_client.exe
+.\tool\spotify_cdp_verify.ps1 -Port 9223 -Mode status
+```
+
+纯脚本层面（不需要账号）用 `node tool/verify_web_player_scripts.mjs` 验证注入脚本在
+Spotify 的 DOM 形状下能挑到正确的播放元素。
+
+构建前提：
 
 - `windows/CMakeLists.txt` 已加 `/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS`，
   否则 flutter_inappwebview 在 VS2026 的 MSVC 14.5x 下编译失败。
-- 插件需要 `nuget.exe` 拉取 WebView2 SDK，本机放在 `<toolchain-root>\nuget.exe`。
+- 插件需要 `nuget.exe` 拉取 WebView2 SDK，把它放进 `PATH` 即可。

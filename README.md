@@ -12,6 +12,8 @@ Flutter 编写，Windows 桌面为主，Android 共用同一套业务代码。
   <img src="docs/screenshots/spotify-player-page.png" width="49%" alt="播放页">
 </p>
 
+![沉浸歌词](docs/screenshots/player-immersive.png)
+
 ## 特性
 
 - **双平台联合搜索**：一个搜索框并行查询 Spotify 与网易云的官方网页，结果标准化后合并；
@@ -97,7 +99,7 @@ lib/
 └── presentation/  搜索页、播放页、沉浸歌词、连接页与组件
 test/              领域 / 应用 / Provider / Widget 测试（175 个）
 tool/              脚本自检、WebView2 CDP 验证、预览入口
-docs/              设计文档、网页播放器可行性记录、接入边界
+docs/              网页播放器实测记录、接入边界、排障手册
 ```
 
 ## 测试
@@ -114,7 +116,7 @@ node tool/verify_web_player_scripts.mjs   # 用真实注入脚本跑 Spotify 的
 
 - [网页播放器可行性与实测记录](docs/web-player-feasibility.md)
 - [接入边界与隐私](docs/provider-integration.md)
-- [跨平台设计](docs/superpowers/specs/2026-10-31-cross-platform-music-client-design.md)
+- [排障手册](docs/runbook.md)
 
 ## 许可
 

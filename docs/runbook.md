@@ -14,11 +14,10 @@ Flutter 带插件的 Windows 构建需要创建符号链接。
 
 ### Gradle 报 `SSLHandshakeException` / `Could not resolve com.android.tools.build:gradle`
 
-本机无法直连 `maven.google.com` 与 GitHub。
+国内网络无法直连 `maven.google.com` 与 GitHub 时：
 
 1. 确认 `android/settings.gradle.kts`、`android/build.gradle.kts` 里的阿里云镜像仍在 `google()` 之前；
-2. 确认 `android/gradle/wrapper/gradle-wrapper.properties` 使用腾讯镜像
-   `https://mirrors.cloud.tencent.com/gradle/gradle-9.3.1-bin.zip`；
+2. 确认 `android/gradle/wrapper/gradle-wrapper.properties` 使用可访问的 Gradle 镜像；
 3. 清理缓存后重试：删除 `~/.gradle/caches`（可选）与 `build/` 目录。
 
 ### `Some Android licenses not accepted`
@@ -29,8 +28,8 @@ flutter doctor --android-licenses   # 一路输入 y
 
 ### `Multiple adb binaries found`
 
-本机同时存在 `D:\platform-tools\adb.exe` 与 Android SDK 内的 adb。
-把 PATH 中 SDK 的 `platform-tools` 放在前面，或删除多余的那份。
+系统里存在两份 `adb.exe`（例如 `platform-tools` 装了两处）。
+把 PATH 中 SDK 的 `platform-tools` 放在前面，或删掉多余的那份。
 
 ## 运行类
 

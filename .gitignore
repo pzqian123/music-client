@@ -54,3 +54,8 @@ app.*.map.json
 android/local.properties
 windows/flutter/ephemeral/
 
+# 仅本机可见的协作记录（不入库）
+HANDOFF.md
+TOOLCHAIN.md
+docs/superpowers/
+
