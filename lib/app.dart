@@ -7,11 +7,13 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'application/music_controller.dart';
+import 'platform/desktop_window_service.dart';
 import 'platform/io_http_fetcher.dart';
 import 'platform/secure_credentials.dart';
 import 'platform/spotify_auth.dart';
 import 'platform/web_playback_engine.dart';
 import 'presentation/app_shell.dart';
+import 'presentation/app_window_chrome.dart';
 import 'presentation/web_player_ui.dart';
 import 'presentation/widgets/hidden_web_player.dart';
 import 'providers/music_provider.dart';
@@ -39,10 +41,17 @@ bool get webPlayerSupported {
 }
 
 class MusicApp extends StatefulWidget {
-  const MusicApp({super.key, this.controller});
+  const MusicApp({
+    super.key,
+    this.controller,
+    this.windowService = const WindowManagerService(),
+    this.showWindowControls = false,
+  });
 
   /// 测试时可注入已构造的控制器；注入时不会创建 WebView。
   final MusicController? controller;
+  final DesktopWindowService windowService;
+  final bool showWindowControls;
 
   @override
   State<MusicApp> createState() => _MusicAppState();
@@ -142,7 +151,21 @@ class _MusicAppState extends State<MusicApp> {
       title: '音乐聚合',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
-      home: const AppShell(),
+      home: Builder(
+        builder: (context) {
+          final immersive = context.select<MusicController, bool>(
+            (controller) =>
+                controller.viewMode == ViewMode.immersive &&
+                controller.playback.current != null,
+          );
+          return AppWindowChrome(
+            windowService: widget.windowService,
+            showWindowControls: widget.showWindowControls,
+            immersive: immersive,
+            child: const AppShell(),
+          );
+        },
+      ),
     );
 
     return MultiProvider(

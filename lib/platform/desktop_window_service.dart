@@ -1,4 +1,4 @@
-import 'package:window_manager/legacy.dart';
+import 'package:window_manager/window_manager.dart';
 
 /// UI 与 Windows 窗口管理器之间的最小契约。
 abstract interface class DesktopWindowService {
@@ -12,26 +12,30 @@ abstract interface class DesktopWindowService {
 class WindowManagerService implements DesktopWindowService {
   const WindowManagerService();
 
+  Window? get _window => WindowManager.instance.getCurrent();
+
   @override
-  Future<void> minimize() => windowManager.minimize();
+  Future<void> minimize() async => _window?.minimize();
 
   @override
   Future<void> toggleMaximize() async {
-    if (await windowManager.isMaximized()) {
-      await windowManager.unmaximize();
+    final window = _window;
+    if (window == null) return;
+    if (window.isMaximized) {
+      window.unmaximize();
     } else {
-      await windowManager.maximize();
+      window.maximize();
     }
   }
 
   @override
-  Future<void> close() => windowManager.close();
+  Future<void> close() async => _window?.close();
 
   @override
-  Future<void> startDragging() => windowManager.startDragging();
+  Future<void> startDragging() async => _window?.startDragging();
 
   @override
-  Future<bool> isMaximized() => windowManager.isMaximized();
+  Future<bool> isMaximized() async => _window?.isMaximized ?? false;
 }
 
 class FakeDesktopWindowService implements DesktopWindowService {
