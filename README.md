@@ -62,8 +62,9 @@ flutter run -d windows         # 本地运行
 1. 在 Spotify Developer Dashboard 创建应用。
 2. 添加 loopback redirect URI，例如 `http://127.0.0.1:8080/callback`。
    Spotify 允许 loopback IP 使用动态端口，因此应用启动时会选择可用端口，但路径保持 `/callback`。
-3. 不要把 client secret 放进客户端。本项目是公共客户端，只使用客户端 ID 与 PKCE。
-4. 用构建参数启动：
+3. 在应用「连接」页点击「打开 Dashboard」，把 Client ID 填入软件并点击「保存并登录」。
+    Client ID 会保存在本机，之后启动时自动恢复。
+4. 也可以使用构建参数预置 Client ID：
 
 ```powershell
 flutter run -d windows --dart-define=SPOTIFY_CLIENT_ID=你的客户端ID
@@ -72,6 +73,8 @@ flutter run -d windows --dart-define=SPOTIFY_CLIENT_ID=你的客户端ID
 Spotify 免费账号可用于本项目的搜索与元数据。Web Playback SDK 的客户端内流媒体播放要求
 Premium，且不适合作为当前 Windows/Android 架构内的通用播放后端，因此本项目仍通过
 “打开官方 App”处理 Spotify 播放。
+
+不要把 client secret 放进客户端。本项目是公共客户端，只使用客户端 ID 与 PKCE。
 
 ## 构建环境注意事项
 

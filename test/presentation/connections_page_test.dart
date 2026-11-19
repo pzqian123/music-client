@@ -13,6 +13,7 @@ import 'package:music_client/presentation/web_player_ui.dart';
 import 'package:music_client/presentation/widgets/hidden_web_player.dart';
 import 'package:music_client/providers/fake_netease_provider.dart';
 import 'package:music_client/providers/fake_spotify_provider.dart';
+import 'package:music_client/providers/spotify_provider.dart';
 import 'package:provider/provider.dart';
 
 /// 连接页需要的最小假桥接（不触碰真实 WebView）。
@@ -57,11 +58,13 @@ class _FakeBridge implements WebPlayerBridge {
   Future<List<OfficialSearchResult>> searchNetease(
     String query, {
     Duration wait = const Duration(milliseconds: 0),
-  }) async =>
-      const [];
+  }) async => const [];
 }
 
-Future<void> runAsync(WidgetTester tester, Future<void> Function() action) async {
+Future<void> runAsync(
+  WidgetTester tester,
+  Future<void> Function() action,
+) async {
   var done = false;
   Object? error;
   StackTrace? stackTrace;
@@ -127,9 +130,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester
-          .widget<Text>(find.byKey(const Key('provider-state-spotify')))
-          .data,
+      tester.widget<Text>(find.byKey(const Key('provider-state-spotify'))).data,
       '未连接',
     );
     expect(find.text('客户端内播放'), findsNWidgets(2));
@@ -146,9 +147,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester
-          .widget<Text>(find.byKey(const Key('provider-state-spotify')))
-          .data,
+      tester.widget<Text>(find.byKey(const Key('provider-state-spotify'))).data,
       '已连接',
     );
     expect(find.textContaining('已连接（演示）'), findsOneWidget);
@@ -166,9 +165,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      tester
-          .widget<Text>(find.byKey(const Key('provider-state-spotify')))
-          .data,
+      tester.widget<Text>(find.byKey(const Key('provider-state-spotify'))).data,
       '未连接',
     );
     expect(await harness.credentials.read('spotify'), isNull);
@@ -219,5 +216,39 @@ void main() {
 
     expect(harness.handoff.last, isNotNull);
     expect(harness.handoff.last!.toString(), contains('spotify:track:'));
+  });
+
+  testWidgets('未配置 Spotify 时显示 Client ID 设置面板', (tester) async {
+    final credentials = InMemoryCredentials();
+    final spotify = SpotifyProvider(credentials: credentials);
+    final controller = MusicController(
+      providers: [spotify],
+      clock: ManualClock(),
+      credentials: credentials,
+      handoff: FakeHandoff(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<MusicController>.value(value: controller),
+          ChangeNotifierProvider<WebPlayerUi>.value(value: WebPlayerUi()),
+          ChangeNotifierProvider<WebPlaybackEngine>.value(
+            value: WebPlaybackEngine(bridge: _FakeBridge()),
+          ),
+        ],
+        child: MaterialApp(
+          theme: buildTheme(),
+          home: const Scaffold(body: ConnectionsPage()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('spotify-client-id')), findsOneWidget);
+    expect(find.byKey(const Key('spotify-open-dashboard')), findsOneWidget);
+    expect(find.byKey(const Key('spotify-save-login')), findsOneWidget);
+    expect(find.textContaining('127.0.0.1:8080/callback'), findsOneWidget);
   });
 }

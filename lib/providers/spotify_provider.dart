@@ -9,25 +9,30 @@ import 'dart:convert';
 
 import '../domain/lyrics.dart';
 import '../domain/models.dart';
+import '../platform/auth_keys.dart';
 import '../platform/oauth_flow.dart';
 import '../platform/secure_credentials.dart';
 import '../platform/spotify_auth.dart';
 import 'http_client_port.dart';
 import 'music_provider.dart';
 
+typedef SpotifyAuthFactory = SpotifyAuth Function(String clientId);
+
 class SpotifyProvider implements MusicProvider {
   SpotifyProvider({
-    required this.clientId,
+    this.clientId,
     required this.credentials,
     HttpFetcher? fetcher,
     this.auth,
+    this.authFactory,
   }) : _fetcher = fetcher ?? disabledFetcher;
 
-  final String? clientId;
   final SecureCredentials credentials;
   final HttpFetcher _fetcher;
-  final SpotifyAuth? auth;
+  final SpotifyAuthFactory? authFactory;
 
+  String? clientId;
+  SpotifyAuth? auth;
   ProviderState _state = ProviderState.disconnected;
   String? _message;
 
@@ -60,6 +65,26 @@ class SpotifyProvider implements MusicProvider {
   );
 
   bool get isConfigured => (clientId ?? '').isNotEmpty;
+
+  /// 保存公共 Client ID，并据此重建 PKCE 授权器。
+  Future<void> configureClientId(String value) async {
+    final trimmed = value.trim();
+    await credentials.write(spotifyClientIdStorageKey, trimmed);
+    clientId = trimmed;
+    auth = trimmed.isEmpty ? null : authFactory?.call(trimmed);
+    _state = ProviderState.disconnected;
+    _message = null;
+  }
+
+  /// 恢复运行时保存的 Client ID；编译参数中的 ID 作为初始默认值。
+  Future<void> restoreClientId() async {
+    final stored = await credentials.read(spotifyClientIdStorageKey);
+    if (stored == null || stored.trim().isEmpty) return;
+    clientId = stored.trim();
+    auth = authFactory?.call(clientId!);
+    _state = ProviderState.disconnected;
+    _message = null;
+  }
 
   @override
   Future<void> connect() async {
@@ -131,6 +156,7 @@ class SpotifyProvider implements MusicProvider {
   Future<List<ProviderTrack>> search(String query) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return const [];
+    if (!isConfigured) return const [];
 
     var token = await _accessToken();
     if (token == null || token.isEmpty) {

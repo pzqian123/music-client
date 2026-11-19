@@ -63,7 +63,7 @@ licenses: All SDK package licenses accepted
 | 目标 | 状态 | 证据 |
 | --- | --- | --- |
 | 静态检查 | ✅ | `flutter analyze` → No issues found |
-| 测试 | ✅ | `flutter test` → 159 passed |
+| 测试 | ✅ | `flutter test` → 161 passed |
 | Android APK | ✅ | `build/app/outputs/flutter-apk/app-debug.apk`（debug，含全部 ABI） |
 | Windows 桌面 | ✅ | `build/windows/x64/runner/Debug/music_client.exe`，已启动验证 |
 | Web 预览（仅用于看界面） | ✅ | `build/web` + `tools/serve_web.js`，截图见 `docs/screenshots/` |

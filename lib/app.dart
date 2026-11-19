@@ -106,22 +106,21 @@ class _MusicAppState extends State<MusicApp> {
   List<MusicProvider> _buildProviders({required bool webAttached}) {
     if (!webAttached) return buildDemoProviders();
 
-    if (_spotifyClientId.isEmpty) {
-      return [FakeSpotifyProvider()];
-    }
-
     final credentials = FlutterSecureStorageCredentials();
-    final auth = SpotifyAuth(
-      clientId: _spotifyClientId,
+    SpotifyAuth authFor(String clientId) => SpotifyAuth(
+      clientId: clientId,
       credentials: credentials,
       httpFetcher: fetchWithIo,
       browserLauncher: _launchExternalBrowser,
     );
+
+    final initialClientId = _spotifyClientId.isEmpty ? null : _spotifyClientId;
     final provider = SpotifyProvider(
-      clientId: _spotifyClientId,
+      clientId: initialClientId,
       credentials: credentials,
       fetcher: fetchWithIo,
-      auth: auth,
+      auth: initialClientId == null ? null : authFor(initialClientId),
+      authFactory: authFor,
     );
     _spotifyProvider = provider;
     return [provider];
@@ -130,6 +129,7 @@ class _MusicAppState extends State<MusicApp> {
   Future<void> _restoreSpotifySession() async {
     final provider = _spotifyProvider;
     if (provider == null) return;
+    await provider.restoreClientId();
     await provider.restoreSession();
     if (!mounted) return;
     _ownedController?.refreshProviders();

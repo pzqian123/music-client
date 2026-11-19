@@ -192,6 +192,38 @@ void main() {
       final tracks = await provider.search('夜空');
       expect(tracks.single.title, '夜空中最亮的星');
     });
+
+    test('运行时 Client ID 会持久化并可恢复', () async {
+      final credentials = InMemoryCredentials();
+      SpotifyAuth authFor(String clientId) => SpotifyAuth(
+        clientId: clientId,
+        credentials: credentials,
+        httpFetcher: disabledFetcher,
+        browserLauncher: (_) async => true,
+      );
+
+      final provider = SpotifyProvider(
+        credentials: credentials,
+        authFactory: authFor,
+      );
+      expect(provider.isConfigured, isFalse);
+
+      await provider.configureClientId('runtime-client-id');
+      expect(provider.isConfigured, isTrue);
+      expect(provider.auth?.clientId, 'runtime-client-id');
+      expect(
+        await credentials.read(spotifyClientIdStorageKey),
+        'runtime-client-id',
+      );
+
+      final restored = SpotifyProvider(
+        credentials: credentials,
+        authFactory: authFor,
+      );
+      await restored.restoreClientId();
+      expect(restored.clientId, 'runtime-client-id');
+      expect(restored.auth?.clientId, 'runtime-client-id');
+    });
   });
 
   group('NeteaseProvider', () {
