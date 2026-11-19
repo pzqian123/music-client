@@ -14,7 +14,7 @@ import 'package:music_client/providers/fake_netease_provider.dart';
 import 'package:music_client/providers/fake_spotify_provider.dart';
 import 'package:provider/provider.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final clock = ManualClock();
@@ -34,6 +34,7 @@ Future<void> main() async {
   clock.seek(const Duration(milliseconds: 9000));
 
   final immersive =
+      args.contains('--immersive') ||
       Uri.base.queryParameters['view'] == 'immersive' ||
       const bool.fromEnvironment('DSH_PREVIEW_IMMERSIVE');
   if (immersive) controller.toggleImmersive();
@@ -51,7 +52,7 @@ Future<void> main() async {
                 controller.playback.current != null;
             return showImmersive
                 ? const ImmersiveLyricsPage()
-                : const PlayerPage();
+                : const Scaffold(body: PlayerPage());
           },
         ),
       ),
