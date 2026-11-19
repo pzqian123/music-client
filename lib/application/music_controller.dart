@@ -82,15 +82,24 @@ class MusicController extends ChangeNotifier {
     PlaybackClock? clock,
     SecureCredentials? credentials,
     OfficialHandoff? handoff,
-    this.webEngine,
+    WebPlaybackEngine? webEngine,
+    Map<MusicService, WebPlaybackEngine>? webEngines,
   }) : providers = List.unmodifiable(providers),
        _clock = clock ?? TimerClock(),
        _credentials = credentials ?? InMemoryCredentials(),
-       _handoff = handoff ?? const UrlLauncherHandoff() {
+       _handoff = handoff ?? const UrlLauncherHandoff(),
+       webEngines = Map.unmodifiable(
+         webEngines ??
+             (webEngine == null
+                 ? const <MusicService, WebPlaybackEngine>{}
+                 : <MusicService, WebPlaybackEngine>{webEngine.service: webEngine}),
+       ) {
     _providerStates = const {};
     _refreshProviderStates();
     _clockSubscription = _clock.positions.listen(_onClockTick);
-    webEngine?.addListener(_onWebEngineChanged);
+    for (final engine in this.webEngines.values) {
+      engine.addListener(() => _onWebEngineChanged(engine));
+    }
   }
 
   final List<MusicProvider> providers;
@@ -98,8 +107,26 @@ class MusicController extends ChangeNotifier {
   final SecureCredentials _credentials;
   final OfficialHandoff _handoff;
 
-  /// 网页播放引擎；为空或未就绪时退回演示播放。
-  final WebPlaybackEngine? webEngine;
+  /// 每个服务一个官方网页播放器（网易云 / Spotify 各一个，常驻）。
+  ///
+  /// 两头都在同一个 WebView2 profile 里，登录态各自独立；同一时刻只有一家在出声。
+  final Map<MusicService, WebPlaybackEngine> webEngines;
+
+  /// 当前真正在出声的那一家。
+  WebPlaybackEngine? _activeWebEngine;
+
+  /// 兼容旧调用：没有活跃引擎时回落到网易云（其次任意一个已挂载的）。
+  WebPlaybackEngine? get webEngine {
+    final active = _activeWebEngine;
+    if (active != null) return active;
+    if (webEngines.isEmpty) return null;
+    return webEngines[MusicService.netease] ?? webEngines.values.first;
+  }
+
+  WebPlaybackEngine? engineFor(MusicService service) => webEngines[service];
+
+  Iterable<WebPlaybackEngine> get _attachedEngines =>
+      webEngines.values.where((engine) => engine.isAttached);
 
   final PlaybackMachine _machine = const PlaybackMachine();
 
@@ -167,13 +194,15 @@ class MusicController extends ChangeNotifier {
     final states = <MusicService, ProviderSnapshot>{
       for (final provider in providers) provider.service: provider.snapshot,
     };
-    if (webEngine?.isAttached ?? false) {
-      states[MusicService.netease] = const ProviderSnapshot(
-        service: MusicService.netease,
+    // 每挂载一家官方网页播放器，就把该服务标成"由官方页面提供"。
+    for (final engine in _attachedEngines) {
+      states[engine.service] = ProviderSnapshot(
+        service: engine.service,
         state: ProviderState.connected,
         capabilities: ProviderCapabilities(
           search: true,
           metadata: true,
+          // Spotify 的歌词由网易云页面按同曲匹配后提供，所以也算有歌词。
           lyrics: true,
           inAppPlayback: true,
           officialHandoff: true,
@@ -198,19 +227,22 @@ class MusicController extends ChangeNotifier {
 
     final stopwatch = Stopwatch()..start();
 
-    final engine = webEngine;
-    final officialEnabled = engine != null && engine.isAttached;
+    final engines = _attachedEngines.toList();
+    final officialEnabled = engines.isNotEmpty;
     final futures = <Future<_ProviderSearchBatch>>[];
 
-    if (officialEnabled) {
-      futures.add(_searchOfficialNetease(engine, trimmed));
+    // 两家官方页面常驻，所以一次搜索能同时拿到两个平台的真实结果。
+    for (final engine in engines) {
+      futures.add(_searchOfficialWeb(engine, trimmed));
     }
 
-    // 官方网页模式只合并真实 Provider，避免演示目录混入线上搜索结果。
+    // 官方网页模式只合并真实 Provider，避免演示目录混入线上搜索结果；
+    // 已经在官方页面里搜过的服务不再重复请求。
     final activeProviders = officialEnabled
         ? providers.where(
             (provider) =>
-                !provider.isDemo && provider.service != MusicService.netease,
+                !provider.isDemo &&
+                !engines.any((engine) => engine.service == provider.service),
           )
         : providers;
     for (final provider in activeProviders) {
@@ -222,10 +254,11 @@ class MusicController extends ChangeNotifier {
 
     final collected = <ProviderTrack>[];
     final errors = <MusicService, ProviderError>{};
+    final officialServices = engines.map((engine) => engine.service).toSet();
     for (final response in responses) {
       if (response.error == null) {
         collected.addAll(response.tracks);
-        if (officialEnabled && response.service == MusicService.netease) {
+        if (officialServices.contains(response.service)) {
           _usedOfficialSearch = true;
         }
       } else {
@@ -234,7 +267,7 @@ class MusicController extends ChangeNotifier {
           service: response.service,
           message: error is ProviderException
               ? error.message
-              : response.service == MusicService.netease
+              : officialServices.contains(response.service)
               ? '官方页面搜索失败：$error'
               : '加载失败，请重试',
         );
@@ -245,7 +278,9 @@ class MusicController extends ChangeNotifier {
     var tracks = merged.tracks;
 
     // 合并后再补网易云封面，保证 Spotify + 网易云同曲不会因先取封面而错过合并。
-    if (officialEnabled) {
+    final neteaseEngine = webEngines[MusicService.netease];
+    if (neteaseEngine != null && neteaseEngine.isAttached) {
+      final engine = neteaseEngine;
       final ids = [
         for (final track in tracks)
           track.sourceFor(MusicService.netease)?.providerTrackId,
@@ -304,19 +339,20 @@ class MusicController extends ChangeNotifier {
     }
   }
 
-  Future<_ProviderSearchBatch> _searchOfficialNetease(
+  Future<_ProviderSearchBatch> _searchOfficialWeb(
     WebPlaybackEngine engine,
     String query,
   ) async {
+    final service = engine.service;
     try {
-      final tracks = await engine.searchNetease(query);
+      final tracks = await engine.searchWeb(query);
       return _ProviderSearchBatch(
-        service: MusicService.netease,
+        service: service,
         tracks: [
           for (final track in tracks)
-            if (track.sourceFor(MusicService.netease) case final source?)
+            if (track.sourceFor(service) case final source?)
               ProviderTrack(
-                service: MusicService.netease,
+                service: service,
                 providerTrackId: source.providerTrackId,
                 title: track.title,
                 artist: track.artist,
@@ -331,21 +367,37 @@ class MusicController extends ChangeNotifier {
         ],
       );
     } catch (error) {
-      return _ProviderSearchBatch(service: MusicService.netease, error: error);
+      return _ProviderSearchBatch(service: service, error: error);
     }
   }
 
-  /// 曲目是否有可用的网易云来源且隐藏播放器就绪。
-  bool _canPlayThroughWeb(Track track, MusicService? service) {
-    if (!(webEngine?.isAttached ?? false)) return false;
-    if (track.sourceFor(MusicService.netease) == null) return false;
-    return service == null || service == MusicService.netease;
+  /// 选播放引擎：显式来源 > 当前在播的那家 > 轨道的首选来源。
+  ///
+  /// 两家官方页面常驻，所以只要对应服务挂载了就一定能内播。
+  WebPlaybackEngine? _engineForPlayback(Track track, MusicService? service) {
+    final explicit = service ?? track.preferredSource?.service;
+    if (explicit != null && track.sourceFor(explicit) != null) {
+      final engine = webEngines[explicit];
+      if (engine != null && engine.isAttached) return engine;
+    }
+    final active = _activeWebEngine;
+    if (active != null && active.isAttached && track.sourceFor(active.service) != null) {
+      return active;
+    }
+    for (final engine in _attachedEngines) {
+      if (track.sourceFor(engine.service) != null) return engine;
+    }
+    return null;
   }
+
+  static bool _isWebHosted(MusicService service) =>
+      service == MusicService.netease || service == MusicService.spotify;
 
   /// 播放入口：统一决定走隐藏的官方页面还是演示播放。
   Future<void> _playTrack(Track track, {MusicService? service}) async {
-    if (_canPlayThroughWeb(track, service)) {
-      await _playViaWeb(track);
+    final engine = _engineForPlayback(track, service);
+    if (engine != null) {
+      await _playViaWeb(track, engine);
       return;
     }
     await _startPlayback(
@@ -372,9 +424,16 @@ class MusicController extends ChangeNotifier {
     await _playTrack(track, service: service);
   }
 
-  Future<void> _playViaWeb(Track track) async {
-    final engine = webEngine;
-    if (engine == null) return;
+  Future<void> _playViaWeb(Track track, WebPlaybackEngine engine) async {
+    final service = engine.service;
+    // 另一家还在响就先停掉，保证同一时刻只有一家在出声。
+    final previous = _activeWebEngine;
+    if (previous != null && previous != engine) {
+      try {
+        await previous.pausePlayback();
+      } catch (_) {}
+    }
+    _activeWebEngine = engine;
     _webMode = true;
     // 切歌先清空上一条的进度与状态，避免失败后残留旧曲目的时间和歌词。
     _lyrics = null;
@@ -383,7 +442,7 @@ class MusicController extends ChangeNotifier {
       queueIndex: _playback.queueIndex,
       position: Duration.zero,
       status: PlaybackStatus.loading,
-      activeService: MusicService.netease,
+      activeService: service,
     );
     notifyListeners();
 
@@ -405,22 +464,38 @@ class MusicController extends ChangeNotifier {
       status: engine.state.paused
           ? PlaybackStatus.paused
           : PlaybackStatus.playing,
-      activeService: MusicService.netease,
+      activeService: service,
     );
     notifyListeners();
 
-    await _loadWebTrackAssets(track);
+    await _loadWebTrackAssets(track, engine);
   }
 
   /// 加载当前网页曲目的歌词与封面；切歌期间丢弃已经过期的异步结果。
-  Future<void> _loadWebTrackAssets(Track track) async {
-    final engine = webEngine;
-    final source = track.sourceFor(MusicService.netease);
-    if (engine == null || source == null) {
+  ///
+  /// - 网易云：歌词与封面都走自己的官方页面。
+  /// - Spotify：封面直接用它自己的 CDN；歌词去网易云按「同名同艺人」匹配，
+  ///   取到 LRC 后喂给同一套歌词引擎（见 [_fetchNeteaseLyricsFor]）。
+  Future<void> _loadWebTrackAssets(Track track, WebPlaybackEngine engine) async {
+    final source = track.sourceFor(engine.service);
+    if (source == null) {
       _lyrics = null;
       return;
     }
     final seq = ++_webAssetSeq;
+
+    if (engine.service != MusicService.netease) {
+      final lyrics = await _fetchNeteaseLyricsFor(track);
+      if (_disposed ||
+          seq != _webAssetSeq ||
+          _playback.current?.id != track.id) {
+        return;
+      }
+      _lyrics = lyrics;
+      notifyListeners();
+      return;
+    }
+
     final lyrics = await engine.fetchLyrics(source.providerTrackId);
     if (_disposed ||
         seq != _webAssetSeq ||
@@ -458,9 +533,74 @@ class MusicController extends ChangeNotifier {
     }
   }
 
-  /// 读取并接管网易云官方播放列表；只在网页播放模式下生效。
+  /// Spotify 曲目 → 网易云同曲歌词。
+  ///
+  /// 做法：在网易云页面里按「标题 + 艺人」搜索，挑标题一致/时长最接近的一条，
+  /// 再调网易云自己的歌词接口拿带时间戳的 LRC。匹配不到就返回 null（界面显示暂无歌词）。
+  Future<LyricTimeline?> _fetchNeteaseLyricsFor(Track track) async {
+    final netease = webEngines[MusicService.netease];
+    if (netease == null || !netease.isAttached) return null;
+    final title = track.title.trim();
+    if (title.isEmpty) return null;
+    final artist = track.artist.trim();
+    final query = artist.isEmpty ? title : '$title $artist';
+
+    final candidates = await netease.searchWeb(query);
+    if (candidates.isEmpty) return null;
+
+    Track? best;
+    var bestScore = 0;
+    for (final candidate in candidates.take(12)) {
+      if (candidate.sourceFor(MusicService.netease) == null) continue;
+      final score = _lyricMatchScore(track, candidate);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+    // 分数太低说明只是同名不同曲，宁可不显示歌词也不要张冠李戴。
+    if (best == null || bestScore < 2) return null;
+    final id = best.sourceFor(MusicService.netease)?.providerTrackId;
+    if (id == null || id.isEmpty) return null;
+    return netease.fetchLyrics(id);
+  }
+
+  static int _lyricMatchScore(Track target, Track candidate) {
+    final expected = normalizeTitle(target.title);
+    final actual = normalizeTitle(candidate.title);
+    var score = 0;
+    if (expected.isNotEmpty && actual.isNotEmpty) {
+      if (expected == actual) {
+        score += 3;
+      } else if (actual.contains(expected) || expected.contains(actual)) {
+        score += 2;
+      }
+    }
+    final targetArtist = _normalizeLoose(target.artist);
+    final actualArtist = _normalizeLoose(candidate.artist);
+    if (targetArtist.isNotEmpty &&
+        actualArtist.isNotEmpty &&
+        (actualArtist.contains(targetArtist) ||
+            targetArtist.contains(actualArtist))) {
+      score += 1;
+    }
+    if (target.duration > Duration.zero && candidate.duration > Duration.zero) {
+      final diff = (target.duration - candidate.duration).inSeconds.abs();
+      if (diff <= 3) {
+        score += 2;
+      } else if (diff <= 10) {
+        score += 1;
+      }
+    }
+    return score;
+  }
+
+  static String _normalizeLoose(String value) =>
+      value.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+
+  /// 读取并接管网易云官方播放列表；只在网易云网页播放模式下生效。
   Future<void> refreshQueue() async {
-    final engine = webEngine;
+    final engine = webEngines[MusicService.netease];
     if (!_webMode || engine == null || !engine.isAttached) return;
     final seq = ++_queueSeq;
     _queueLoading = true;
@@ -498,14 +638,16 @@ class MusicController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _onWebEngineChanged() {
+  void _onWebEngineChanged(WebPlaybackEngine engine) {
+    if (_disposed) return;
     _refreshProviderStates();
-    if (!_webMode) {
+    // 只有正在出声的那一家才驱动播放状态；另一家的轮询只管刷新能力快照。
+    if (!_webMode || engine != _activeWebEngine) {
       notifyListeners();
       return;
     }
-    final state = webEngine?.state;
-    if (state == null || !state.hasMedia) return;
+    final state = engine.state;
+    if (!state.hasMedia) return;
     // 正在打开新曲目时，网页可能还会短暂上报上一首状态，不能据此回滚界面。
     if (_playback.status == PlaybackStatus.loading) return;
     if (state.ended) {
@@ -513,7 +655,8 @@ class MusicController extends ChangeNotifier {
       return;
     }
 
-    final actualIndex = _queueIndexForWebState(state);
+    final service = engine.service;
+    final actualIndex = _queueIndexForWebState(state, service);
     if (actualIndex != null && actualIndex != _playback.queueIndex) {
       final track = _playback.queue[actualIndex];
       _playback = PlaybackState(
@@ -522,15 +665,15 @@ class MusicController extends ChangeNotifier {
         position: state.position,
         status:
             state.paused ? PlaybackStatus.paused : PlaybackStatus.playing,
-        activeService: MusicService.netease,
+        activeService: service,
       );
       _lyrics = null;
       notifyListeners();
-      unawaited(_loadWebTrackAssets(track));
+      unawaited(_loadWebTrackAssets(track, engine));
       return;
     }
     if (actualIndex == null) {
-      final external = _externalWebTrack(state);
+      final external = _externalWebTrack(state, service);
       if (external != null) {
         final queue = List<Track>.from(_playback.queue);
         final insertAt = (_playback.queueIndex + 1).clamp(0, queue.length);
@@ -541,11 +684,11 @@ class MusicController extends ChangeNotifier {
           position: state.position,
           status:
               state.paused ? PlaybackStatus.paused : PlaybackStatus.playing,
-          activeService: MusicService.netease,
+          activeService: service,
         );
         _lyrics = null;
         notifyListeners();
-        unawaited(_loadWebTrackAssets(external));
+        unawaited(_loadWebTrackAssets(external, engine));
         return;
       }
     }
@@ -560,11 +703,11 @@ class MusicController extends ChangeNotifier {
   }
 
   /// 官方网页会自行播放下一首；优先用歌曲 ID，回退到 Media Session / DOM 标题。
-  int? _queueIndexForWebState(WebPlayerState state) {
+  int? _queueIndexForWebState(WebPlayerState state, MusicService service) {
     final actualId = state.nowPlayingId.trim();
     if (actualId.isNotEmpty) {
       for (var i = 0; i < _playback.queue.length; i++) {
-        final source = _playback.queue[i].sourceFor(MusicService.netease);
+        final source = _playback.queue[i].sourceFor(service);
         if (source?.providerTrackId == actualId) return i;
       }
     }
@@ -610,26 +753,36 @@ class MusicController extends ChangeNotifier {
       : state.nowPlaying.trim();
 
   /// 网页自行播放推荐曲时可能不在应用队列中；把它作为新的真实来源接入队列。
-  Track? _externalWebTrack(WebPlayerState state) {
+  Track? _externalWebTrack(WebPlayerState state, MusicService service) {
     final title = _webStateTitle(state);
     final id = state.nowPlayingId.trim();
     if (title.isEmpty && id.isEmpty) return null;
     final artist = state.mediaSessionArtist.trim();
     final album = state.mediaSessionAlbum.trim();
+    final isSpotify = service == MusicService.spotify;
+    final prefix = isSpotify ? 'spotify-web' : 'netease-web';
     final source = TrackSource(
-      service: MusicService.netease,
+      service: service,
       providerTrackId: id,
       playable: id.isNotEmpty,
       officialHandoffUri: id.isEmpty
           ? null
-          : Uri.tryParse('https://music.163.com/song?id=$id'),
+          : Uri.tryParse(
+              isSpotify
+                  ? 'https://open.spotify.com/track/$id'
+                  : 'https://music.163.com/song?id=$id',
+            ),
     );
     return Track(
       id: id.isNotEmpty
-          ? 'netease-web-$id'
-          : 'netease-web-${title.hashCode}-${artist.hashCode}',
-      title: title.isEmpty ? '网易云音乐当前曲目' : title,
-      artist: artist.isEmpty ? '网易云音乐' : artist,
+          ? '$prefix-$id'
+          : '$prefix-${title.hashCode}-${artist.hashCode}',
+      title: title.isEmpty
+          ? (isSpotify ? 'Spotify 当前曲目' : '网易云音乐当前曲目')
+          : title,
+      artist: artist.isEmpty
+          ? (isSpotify ? 'Spotify' : '网易云音乐')
+          : artist,
       album: album,
       duration: state.duration,
       sources: [source],
@@ -638,8 +791,8 @@ class MusicController extends ChangeNotifier {
 
   /// 拖动进度（网页播放模式下真实生效）。
   Future<void> seekTo(Duration position) async {
-    final engine = webEngine;
-    if (_webMode && engine != null) {
+    final engine = _activeWebEngine ?? webEngine;
+    if (_webMode && engine != null && engine.isAttached) {
       _playback = _playback.copyWith(position: position);
       notifyListeners();
       await engine.seek(position);
@@ -667,11 +820,12 @@ class MusicController extends ChangeNotifier {
     _playback = _machine.playAt(_playback, index);
     notifyListeners();
 
-    if (_officialQueueMode && (webEngine?.isAttached ?? false)) {
+    final netease = webEngines[MusicService.netease];
+    if (_officialQueueMode && (netease?.isAttached ?? false)) {
       final source = track.sourceFor(MusicService.netease);
       final ok = source == null
           ? false
-          : await webEngine!.playNeteaseQueueItem(
+          : await netease!.playNeteaseQueueItem(
               source.providerTrackId,
             );
       if (!ok) {
@@ -683,7 +837,8 @@ class MusicController extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      final state = webEngine!.state;
+      _activeWebEngine = netease;
+      final state = netease.state;
       _playback = _playback.copyWith(
         position: state.position,
         status: state.paused
@@ -694,7 +849,7 @@ class MusicController extends ChangeNotifier {
       );
       _lyrics = null;
       notifyListeners();
-      await _loadWebTrackAssets(track);
+      await _loadWebTrackAssets(track, netease);
       return;
     }
     await _playTrack(track);
@@ -707,6 +862,17 @@ class MusicController extends ChangeNotifier {
     final position = _playback.position;
     _playback = _machine.switchSource(_playback, service);
     notifyListeners();
+
+    final engine = webEngines[service];
+    if (engine != null && engine.isAttached && _isWebHosted(service)) {
+      await _playViaWeb(track, engine);
+      if (position > Duration.zero &&
+          _playback.status == PlaybackStatus.playing) {
+        await seekTo(position);
+      }
+      return;
+    }
+
     await _startPlayback(
       track,
       service,
@@ -806,9 +972,10 @@ class MusicController extends ChangeNotifier {
     final current = _playback.current;
     if (current == null) return;
 
-    // 网页播放模式：直接操作隐藏的官方页面。
-    if (_webMode && (webEngine?.isAttached ?? false)) {
-      await webEngine!.toggle();
+    // 网页播放模式：直接操作当前出声的那家官方页面。
+    final active = _activeWebEngine;
+    if (_webMode && (active?.isAttached ?? false)) {
+      await active!.toggle();
       return;
     }
 
@@ -872,8 +1039,9 @@ class MusicController extends ChangeNotifier {
         _playback.position == Duration.zero &&
         wasPlaying) {
       // 只是回到本曲开头：网页播放模式下要真正 seek 回 0。
-      if (_webMode && (webEngine?.isAttached ?? false)) {
-        await webEngine!.seek(Duration.zero);
+      final active = _activeWebEngine;
+      if (_webMode && (active?.isAttached ?? false)) {
+        await active!.seek(Duration.zero);
       } else {
         _clock.seek(Duration.zero);
       }
@@ -895,6 +1063,43 @@ class MusicController extends ChangeNotifier {
   void refreshProviders() {
     _refreshProviderStates();
     notifyListeners();
+  }
+
+  /// 当前出声的官方页面属于哪一家（未挂载时为 null）。
+  MusicService? get webService {
+    final active = _activeWebEngine;
+    if (active != null && active.isAttached) return active.service;
+    final attached = _attachedEngines;
+    return attached.isEmpty ? null : attached.first.service;
+  }
+
+  /// 指定服务的官方页面是否已挂载（两家常驻，用来越权/能力判断）。
+  bool isWebEngineAttached(MusicService service) =>
+      webEngines[service]?.isAttached ?? false;
+
+  /// 那一家官方页面当前是否已登录；null 表示无法判断。
+  Future<bool?> checkWebLogin(MusicService service) async =>
+      webEngines[service]?.detectLogin();
+
+  /// 两家都已登录时返回 true（用于连接页的总览提示）。
+  Future<bool> checkAllLoggedIn() async {
+    var any = false;
+    for (final engine in _attachedEngines) {
+      final result = await engine.detectLogin();
+      if (result == true) {
+        any = true;
+      } else if (result == false) {
+        return false;
+      }
+    }
+    return any;
+  }
+
+  /// 探测当前出声那家是否已登录。
+  Future<bool?> checkActiveWebLogin() async {
+    final active = _activeWebEngine ?? webEngine;
+    if (active == null || !active.isAttached) return null;
+    return active.detectLogin();
   }
 
   Future<void> disconnect(MusicService service) async {
@@ -948,7 +1153,8 @@ class MusicController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    webEngine?.removeListener(_onWebEngineChanged);
+    // 监听器是按引擎创建的闭包，无法单独移除，这里直接清空引用即可；
+    // 控制器销毁后引擎回调里的 notifyListeners 会被 _disposed 挡住。
     _clockSubscription?.cancel();
     unawaited(_clock.dispose());
     super.dispose();

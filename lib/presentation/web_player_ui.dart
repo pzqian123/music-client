@@ -1,21 +1,27 @@
 import 'package:flutter/foundation.dart';
 
-/// 控制「是否把官方页面显示出来」的 UI 状态。
+import '../domain/models.dart';
+
+/// 控制「把哪一家的官方页面显示出来」的 UI 状态。
 ///
-/// 默认不显示：官方页面在应用界面之下持续存在，用户只在登录时才翻上来。
+/// 两家官方页面（网易云 / Spotify）都常驻在应用界面之下，所以搜索和歌词
+/// 任何时刻都能同时用到；这里只决定"翻上来的是哪一家"，用于登录或手动切歌。
 class WebPlayerUi extends ChangeNotifier {
-  bool _mounted = false;
+  MusicService _service = MusicService.netease;
   bool _showing = false;
 
-  /// 是否已经把 WebView 挂进组件树。挂上后不再销毁，否则登录态会丢。
-  bool get isMounted => _mounted;
+  /// 当前要显示的官方页面属于哪一家。
+  MusicService get service => _service;
 
-  /// 是否正在显示官方页面（登录/切换服务时）。
+  /// 两家网页播放器都常驻挂载，这里恒为 true（保留旧接口语义）。
+  bool get isMounted => true;
+
+  /// 是否正在显示某一家官方页面。
   bool get isShowing => _showing;
 
-  /// 显示官方页面（首次调用会挂载 WebView）。
-  void open() {
-    _mounted = true;
+  /// 显示指定服务的官方页面（首次就是登录页）。
+  void open([MusicService? service]) {
+    if (service != null) _service = service;
     _showing = true;
     notifyListeners();
   }

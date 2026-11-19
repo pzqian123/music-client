@@ -204,10 +204,14 @@ DedupeResult mergeProviderTracks(List<ProviderTrack> tracks) {
       String? artwork;
       int? accent;
       final sources = <TrackSource>[];
+      final seenServices = <MusicService>{};
       for (final item in cluster) {
         if (item.duration > longest) longest = item.duration;
         artwork ??= item.artworkUrl;
         accent ??= item.accentColor;
+        // 一个曲目同一个服务只保留一条来源：Spotify 搜索结果里同曲多版本
+        // 会被合并进同一簇，若都塞进 sources 会让来源按钮出现重复 Key。
+        if (!seenServices.add(item.service)) continue;
         final source = TrackSource(
           service: item.service,
           providerTrackId: item.providerTrackId,

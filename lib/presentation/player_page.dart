@@ -115,7 +115,7 @@ class _LeftPanel extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          '${track.artist} · ${track.album}',
+          trackMetaLine(track),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.bodyMedium,
@@ -150,7 +150,9 @@ class _LeftPanel extends StatelessWidget {
         children: [
           for (final source in track.sources)
             ChoiceChip(
-              key: Key('player-source-${source.service.name}'),
+              key: Key(
+                'player-source-${source.service.name}-${source.providerTrackId}',
+              ),
               label: Text(source.service.displayName),
               selected: playback.activeService == source.service,
               onSelected: (_) => music.switchSource(source.service),

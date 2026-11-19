@@ -83,7 +83,14 @@ void main() {
     final merged = harness.controller.search.results.firstWhere(
       (track) => track.sources.length == 2,
     );
-    await tester.tap(find.byKey(Key('source-${merged.id}-spotify')));
+    final spotifySource = merged.sources.firstWhere(
+      (source) => source.service.name == 'spotify',
+    );
+    await tester.tap(
+      find.byKey(
+        Key('source-${merged.id}-spotify-${spotifySource.providerTrackId}'),
+      ),
+    );
     await pumpSearch(tester);
 
     expect(harness.controller.playback.activeService?.name, 'spotify');

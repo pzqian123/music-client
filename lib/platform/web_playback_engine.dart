@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import '../domain/lyrics.dart';
 import '../domain/models.dart';
 import '../presentation/widgets/hidden_web_player.dart';
+import 'spotify_web_scripts.dart';
 import 'web_player_engine.dart';
 import 'web_player_scripts.dart';
 
@@ -179,20 +180,100 @@ Track trackFromOfficialQueueItem(OfficialQueueItem item) {
   );
 }
 
+/// Spotify 官方网页搜索结果条目。
+class SpotifySearchResult {
+  final String id;
+  final String title;
+  final String artist;
+  final String duration;
+  final String cover;
+
+  const SpotifySearchResult({
+    required this.id,
+    required this.title,
+    required this.artist,
+    this.duration = '',
+    this.cover = '',
+  });
+}
+
+/// 解析 `spotifyParseSearchScript` 返回的 JSON。
+List<SpotifySearchResult> parseSpotifySearch(String raw) {
+  final trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return const [];
+  try {
+    final decoded = jsonDecode(trimmed);
+    if (decoded is! Map<String, dynamic>) return const [];
+    final items = decoded['items'];
+    if (items is! List) return const [];
+    final results = <SpotifySearchResult>[];
+    for (final item in items) {
+      if (item is! Map<String, dynamic>) continue;
+      final id = item['id'];
+      final title = item['title'];
+      if (id is! String || id.isEmpty || title is! String || title.isEmpty) {
+        continue;
+      }
+      results.add(
+        SpotifySearchResult(
+          id: id,
+          title: title,
+          artist: (item['artist'] as String?) ?? '',
+          duration: (item['duration'] as String?) ?? '',
+          cover: (item['cover'] as String?) ?? '',
+        ),
+      );
+    }
+    return results;
+  } catch (_) {
+    return const [];
+  }
+}
+
+/// 把 Spotify 网页搜索结果转成领域 [Track]。
+Track trackFromSpotifyResult(SpotifySearchResult result) {
+  final cover = upgradeSpotifyCover(result.cover);
+  return Track(
+    id: 'spotify-web-${result.id}',
+    title: result.title,
+    artist: result.artist,
+    album: '',
+    duration: parseClockDuration(result.duration),
+    artworkUrl: cover.isEmpty ? null : cover,
+    sources: [
+      TrackSource(
+        service: MusicService.spotify,
+        providerTrackId: result.id,
+        playable: true,
+        officialHandoffUri: Uri.tryParse(
+          'https://open.spotify.com/track/${result.id}',
+        ),
+      ),
+    ],
+  );
+}
+
 class WebPlaybackEngine extends ChangeNotifier {
   WebPlaybackEngine({
     required this.bridge,
     this.pollInterval = const Duration(milliseconds: 700),
-    this.service = MusicService.netease,
-  });
+    MusicService initialService = MusicService.netease,
+  }) : _service = initialService;
 
   final WebPlayerBridge bridge;
   final Duration pollInterval;
-  final MusicService service;
+
+  MusicService _service;
+
+  /// 当前隐藏页面承载的服务：决定搜索结果页、曲目深链接和解析脚本。
+  MusicService get service => _service;
 
   WebPlayerState _state = const WebPlayerState.empty();
   Timer? _timer;
   String? _lastError;
+  bool _switching = false;
+
+  bool get isSwitchingService => _switching;
 
   bool get isBusy => _busy;
 
@@ -204,7 +285,25 @@ class WebPlaybackEngine extends ChangeNotifier {
 
   bool get isAttached => bridge.isAttached;
 
-  WebPlayerTarget get target => webTargetFor(service) ?? neteaseWebTarget;
+  WebPlayerTarget get target => webTargetFor(_service) ?? neteaseWebTarget;
+
+  /// 切换隐藏页面承载的服务（会导航到该服务的首页，登录态各自独立保存）。
+  Future<void> useService(MusicService next) async {
+    if (_service == next) return;
+    _service = next;
+    _state = const WebPlayerState.empty();
+    _lastError = null;
+    _switching = true;
+    notifyListeners();
+    try {
+      await bridge.openHomeFor(target);
+    } catch (_) {
+      // 导航失败不阻塞后续操作，用户仍可手动打开官方页面。
+    } finally {
+      _switching = false;
+      notifyListeners();
+    }
+  }
 
   void start() {
     _timer ??= Timer.periodic(pollInterval, (_) => unawaited(_poll()));
@@ -243,8 +342,56 @@ class WebPlaybackEngine extends ChangeNotifier {
     return results.map(trackFromOfficialResult).toList();
   }
 
+  /// 在官方页面里搜索 Spotify（曲目页签），不依赖 Web API / Client ID。
+  Future<List<Track>> searchSpotify(String query) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty || !bridge.isAttached) return const [];
+    try {
+      await bridge.runScript(spotifySearchScript(trimmed));
+      // 页面要重新渲染 + 拉接口，轮询到出现结果或超时。
+      for (var attempt = 0; attempt < 26; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 420));
+        final raw = await bridge.runScript(spotifyParseSearchScript);
+        final results = parseSpotifySearch(raw);
+        if (results.isNotEmpty) {
+          return results.map(trackFromSpotifyResult).toList();
+        }
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  /// 按当前承载的服务发起官方页面搜索。
+  Future<List<Track>> searchWeb(String query) {
+    return _service == MusicService.spotify
+        ? searchSpotify(query)
+        : searchNetease(query);
+  }
+
+  /// 当前是否已登录（Spotify 用播放条上的用户菜单判断；网易云用本地歌曲入口判断）。
+  Future<bool?> detectLogin() async {
+    if (!bridge.isAttached) return null;
+    try {
+      if (_service == MusicService.spotify) {
+        final raw = await bridge.runScript(spotifyLoginStateScript);
+        final decoded = _decode(raw);
+        if (decoded == null) return null;
+        return decoded['loggedIn'] == true;
+      }
+      final raw = await bridge.runScript(mediaStateScript);
+      final decoded = _decode(raw);
+      if (decoded == null) return null;
+      // 网易云：页面能读到播放栏/媒体元素即视为可用会话。
+      return decoded['hasMedia'] == true ||
+          ((decoded['pageTitle'] as String?) ?? '').contains('网易云');
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 读取网易云官方网页的真实播放队列。
   Future<List<Track>> fetchNeteaseQueue() async {
+    if (_service != MusicService.netease) return const [];
     try {
       await bridge.runScript(neteaseQueueOpenScript);
       await Future<void>.delayed(const Duration(milliseconds: 350));
@@ -258,7 +405,7 @@ class WebPlaybackEngine extends ChangeNotifier {
 
   /// 点击官方播放列表中的曲目，保留网页自己的队列顺序和权益判断。
   Future<bool> playNeteaseQueueItem(String songId) async {
-    if (songId.isEmpty) return false;
+    if (songId.isEmpty || _service != MusicService.netease) return false;
     try {
       await bridge.runScript(neteaseQueueOpenScript);
       await Future<void>.delayed(const Duration(milliseconds: 350));
@@ -303,23 +450,33 @@ class WebPlaybackEngine extends ChangeNotifier {
       }
 
       if (!clicked) {
-        _lastError = '这首歌在官方页面无法播放（可能需要 VIP 或无版权）';
+        _lastError = _service == MusicService.spotify
+            ? '这首曲目在官方页面没有播放按钮（可能需要登录，或该地区不可用）'
+            : '这首歌在官方页面无法播放（可能需要 VIP 或无版权）';
         return false;
       }
 
       // 等真实元素起播，并确认放的是目标曲目（标题匹配）而不是上一首。
       // 注意：只在"确实放错了歌"时才补点一次，避免重复点击把歌重头播。
+      // Spotify 是整页重载 + DRM 起播，给的时间要明显更长。
       final expected = _normalize(track.title);
+      final tries = _service == MusicService.spotify ? 34 : 8;
       for (var attempt = 0; attempt < 2; attempt++) {
-        if (await _waitForPlayback(expected, tries: 8)) return true;
+        if (await _waitForPlayback(expected, tries: tries)) return true;
         if (attempt == 0) {
-          await bridge.clickSongPagePlay();
+          if (_service == MusicService.spotify) {
+            await bridge.runScript(spotifyTrackPlayScript);
+          } else {
+            await bridge.clickSongPagePlay();
+          }
           await Future<void>.delayed(const Duration(milliseconds: 1500));
         }
       }
 
       _lastError = _state.hasMedia && _state.nowPlaying.isNotEmpty
-          ? '官方页面播放的是「${_state.nowPlaying}」，不是目标曲目'
+          ? '官方页面没有切到目标曲目（当前显示「${_state.nowPlaying}」），请稍后重试'
+          : _service == MusicService.spotify
+          ? '官方页面未开始播放（请先在「连接」页登录 Spotify）'
           : '官方页面未开始播放（可能是 VIP 或版权限制）';
       return false;
     } catch (error) {
@@ -333,15 +490,34 @@ class WebPlaybackEngine extends ChangeNotifier {
 
   /// 轮询等待"正在播放且曲目匹配"。
   ///
-  /// 判定顺序：播放栏曲名 → 歌曲页标题（页面标题里也带曲名，比播放栏更新更及时）。
+  /// 判定顺序：Media Session 元数据（最及时）→ 播放栏曲名 → 页面标题。
   /// 只要其一匹配就算成功，避免因为播放栏文字延迟而重复点击、把歌重头播。
+  ///
+  /// 若曲目已经切对但播放器停在暂停（Spotify 整页重载后偶发），补一次 play()。
   Future<bool> _waitForPlayback(String expected, {required int tries}) async {
+    var pausedMatches = 0;
     for (var i = 0; i < tries; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 400));
       await _poll();
       if (!_state.hasMedia || _state.duration.inMilliseconds == 0) continue;
-      if (_state.paused) continue;
-      if (_titleMatches(_state.nowPlaying, expected)) return true;
+
+      final titleMatched =
+          _titleMatches(_state.mediaSessionTitle, expected) ||
+          _titleMatches(_state.nowPlaying, expected);
+
+      if (_state.paused) {
+        if (titleMatched) {
+          pausedMatches++;
+          if (pausedMatches == 2) {
+            await bridge.play();
+            await Future<void>.delayed(const Duration(milliseconds: 700));
+            await _poll();
+            if (_state.hasMedia && !_state.paused) return true;
+          }
+        }
+        continue;
+      }
+      if (titleMatched) return true;
       if (i % 2 == 1) {
         final title = await bridge.pageTitle();
         if (_titleMatches(title, expected)) return true;
@@ -353,14 +529,21 @@ class WebPlaybackEngine extends ChangeNotifier {
   static String _normalize(String value) =>
       value.replaceAll(RegExp(r'\s+'), '').toLowerCase();
 
-  /// 打开曲目页并尝试点中播放按钮，返回是否点到了。
+  /// 打开曲目页并尝试点中播放按钮，返回是否点到了（或本来就在播）。
   Future<bool> _openAndClick(String trackId, {required int attempt}) async {
     await bridge.openTrack(target, trackId);
-    for (var i = 0; i < 14; i++) {
+    // Spotify 是整页重载，首屏比网易云的 hash 路由慢。
+    final rounds = _service == MusicService.spotify ? 24 : 14;
+    for (var i = 0; i < rounds; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      final result = await bridge.clickSongPagePlay();
+      final result = _service == MusicService.spotify
+          ? await bridge.runScript(spotifyTrackPlayScript)
+          : await bridge.clickSongPagePlay();
       if (result.startsWith('click-error')) return false;
-      if (result.startsWith('clicked')) return true;
+      if (result.startsWith('clicked') ||
+          result.startsWith('already-playing')) {
+        return true;
+      }
     }
     return false;
   }
@@ -376,10 +559,12 @@ class WebPlaybackEngine extends ChangeNotifier {
   }
 
   /// 通过官方页面抓取封面字节（绕过图床的 UA 拦截）。
+  ///
+  /// 只有网易云图床需要这招；Spotify 的 i.scdn.co 允许直连，直接给 artworkUrl。
   Future<Map<String, List<int>>> fetchCoverBytes(
     List<Map<String, String>> items,
   ) async {
-    if (items.isEmpty) return const {};
+    if (items.isEmpty || _service != MusicService.netease) return const {};
     try {
       await bridge.runScript(neteaseCoverBytesScript(items));
       for (var attempt = 0; attempt < 24; attempt++) {
@@ -433,7 +618,7 @@ class WebPlaybackEngine extends ChangeNotifier {
   }
 
   Future<Map<String, String>> _fetchCoversOnce(List<String> songIds) async {
-    if (songIds.isEmpty) return const {};
+    if (songIds.isEmpty || _service != MusicService.netease) return const {};
     try {
       await bridge.runScript(neteaseCoverFetchScript(songIds));
       for (var attempt = 0; attempt < 10; attempt++) {
@@ -465,8 +650,11 @@ class WebPlaybackEngine extends ChangeNotifier {
   }
 
   /// 取歌词：在官方页面上下文里请求其自身的歌词接口，得到带时间戳的 LRC。
+  ///
+  /// Spotify 的歌词走私有接口（spclient + 令牌），网页版也没有 LRC 文本，
+  /// 因此只对网易云生效，Spotify 返回 null 让界面走"无歌词"分支。
   Future<LyricTimeline?> fetchLyrics(String songId) async {
-    if (songId.isEmpty) return null;
+    if (songId.isEmpty || _service != MusicService.netease) return null;
     try {
       await bridge.runScript(neteaseLyricFetchScript(songId));
       for (var attempt = 0; attempt < 12; attempt++) {

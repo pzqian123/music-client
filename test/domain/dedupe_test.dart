@@ -143,6 +143,19 @@ void main() {
       );
     });
 
+    test('同一服务的多个来源只保留一条（Spotify 同曲多版本）', () {
+      final result = mergeProviderTracks([
+        _spot('sp-a', 'Love Story'),
+        _spot('sp-b', 'Love Story'),
+      ]);
+      expect(result.tracks.length, 1);
+      final sources = result.tracks.single.sources;
+      expect(sources.length, 1);
+      expect(sources.single.service, MusicService.spotify);
+      // 保留的是簇里第一条，保证重复合并不会让界面出现重复 Key。
+      expect(sources.single.providerTrackId, 'sp-a');
+    });
+
     test('空输入返回空结果', () {
       final result = mergeProviderTracks(const []);
       expect(result.tracks, isEmpty);

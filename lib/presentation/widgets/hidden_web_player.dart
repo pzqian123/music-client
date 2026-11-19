@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
@@ -204,20 +205,33 @@ class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
     _prepareEnvironment();
   }
 
+  /// 服务切换（网易云 ⇄ Spotify）时复用同一个 WebView，只导航过去：
+  /// 销毁重建会丢掉另一家的登录态所在页面的会话状态，也会让音频中断。
+  @override
+  void didUpdateWidget(covariant HiddenWebPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldHome = oldWidget.target.homeUrl;
+    final newHome = widget.target.homeUrl;
+    if (oldHome == newHome) return;
+    if (!widget.handle.isAttached) return;
+    unawaited(widget.handle.loadUrl(newHome));
+  }
+
   /// Windows 需要 WebView2 启动参数：
   /// - `--autoplay-policy=no-user-gesture-required`：允许 JS 直接 play()（否则官方页面必须手点）
   /// - `--disable-features=CalculateNativeWinOcclusion`：页面被盖住时不要判定为不可见而节流
   ///
   /// 同时指定持久化的 userDataFolder：否则每次启动都是新的浏览器会话，官方页面要重新登录。
+  ///
+  /// 调试钩子：设置环境变量 `DSH_WEBVIEW_DEBUG_PORT=9223` 可以打开 WebView2 的
+  /// 远程调试端口，便于用 CDP 检查官方页面、注入会话做自动化验证。默认不开启。
   Future<void> _prepareEnvironment() async {
     if (!Platform.isWindows) return;
     try {
       final environment = await WebViewEnvironment.create(
         settings: WebViewEnvironmentSettings(
           userDataFolder: _userDataFolder(),
-          additionalBrowserArguments:
-              '--autoplay-policy=no-user-gesture-required '
-              '--disable-features=CalculateNativeWinOcclusion',
+          additionalBrowserArguments: _browserArguments(),
         ),
       );
       if (!mounted) return;
@@ -226,6 +240,15 @@ class _HiddenWebPlayerState extends State<HiddenWebPlayer> {
       if (!mounted) return;
       setState(() => _environmentFailed = true);
     }
+  }
+
+  String _browserArguments() {
+    const base =
+        '--autoplay-policy=no-user-gesture-required '
+        '--disable-features=CalculateNativeWinOcclusion';
+    final port = Platform.environment['DSH_WEBVIEW_DEBUG_PORT'];
+    if (port == null || int.tryParse(port) == null) return base;
+    return '$base --remote-debugging-port=$port';
   }
 
   String _userDataFolder() {

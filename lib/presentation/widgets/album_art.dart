@@ -75,6 +75,9 @@ class AlbumArt extends StatelessWidget {
     // 不要再走网络加载，否则会显示"破图"标记。
     if (url.contains('music.126.net')) return fallback;
 
+    // Spotify 的 i.scdn.co 允许直连，但不要带网易云的 Referer。
+    final headers = url.contains('scdn.co') ? _plainHeaders : _imageHeaders;
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: Image.network(
@@ -83,7 +86,7 @@ class AlbumArt extends StatelessWidget {
         height: size,
         fit: BoxFit.cover,
         // 网易云图床会按 UA 拦截（Dart/Flutter 默认 UA 返回 403），必须伪装成浏览器。
-        headers: _imageHeaders,
+        headers: headers,
         // 加载中显示占位，失败时在角上给出明确标记，便于排查。
         loadingBuilder: (context, child, progress) =>
             progress == null ? child : fallback,
@@ -114,6 +117,13 @@ const Map<String, String> _imageHeaders = {
       'AppleWebKit/537.36 (KHTML, like Gecko) '
       'Chrome/156.0.0.0 Safari/537.36',
   'Referer': 'https://music.163.com/',
+};
+
+/// 只带浏览器 UA：Spotify / 通用 CDN 用这套。
+const Map<String, String> _plainHeaders = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+      'AppleWebKit/537.36 (KHTML, like Gecko) '
+      'Chrome/156.0.0.0 Safari/537.36',
 };
 
 /// 把图片加载错误写到临时文件，便于在无控制台的桌面进程里排查。

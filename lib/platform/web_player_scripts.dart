@@ -23,27 +23,45 @@ const String mediaTapScript = r"""
   }
   window.__dshRememberMedia = remember;
 
-  // 统一的选择器：
-  // 1) 优先"正在播且有长度"；2) 有长度；3) 有 src 的；4) 最后创建的那个。
-  // 直接取第一个会拿到播放器创建的哑元素（duration 恒为 0）。
+  // 统一的选择器（打分制，按"更像真实播放源"排序）：
+  //
+  // Spotify 实测有两类媒体元素：
+  //   1) 真正的播放元素：不挂 DOM（parentElement 为 null），blob: 源，
+  //      duration 等于曲目长度（例如 242.19s），可 seek；
+  //   2) DOM 里的占位视频：`loop` 属性、duration 只有 5.7s，暂停它不影响播放。
+  // 网易云则是「new Audio() 创建但不挂 DOM」+ 若干 duration 为 0 的哑元素。
+  //
+  // 因此规则：时长越长越像真的；loop 的降权；没有时长的重罚；
+  // 正在播放的略微加权；挂 DOM 的略降权（真实播放源通常被刻意隐藏）。
   window.__dshPickMedia = function () {
     var list = (window.__dshMediaEls || []).slice();
     var dom = document.querySelectorAll('audio, video');
     for (var i = 0; i < dom.length; i++) {
       if (list.indexOf(dom[i]) === -1) { list.push(dom[i]); }
     }
-    var playing = null;
-    var timed = null;
-    var withSrc = null;
+    var best = null;
+    var bestScore = -Infinity;
     for (var j = 0; j < list.length; j++) {
       var el = list[j];
       if (!el) { continue; }
-      var hasTime = isFinite(el.duration) && el.duration > 0;
-      if (!el.paused && hasTime) { playing = el; break; }
-      if (hasTime && !timed) { timed = el; }
-      if (!withSrc && (el.currentSrc || el.src)) { withSrc = el; }
+      var hasTime = isFinite(el.duration) && el.duration > 1;
+      var score = 0;
+      if (hasTime) {
+        score += 1000 + el.duration;
+      } else {
+        score -= 2000;
+      }
+      if (el.loop) { score -= 5000; }
+      if (el.parentElement) { score -= 1; } else { score += 2; }
+      if (!el.paused && !el.ended) { score += 5; }
+      if (el.ended) { score -= 300; }
+      if (!withSrcPlaceholder(el)) { score -= 50; }
+      if (score > bestScore) { bestScore = score; best = el; }
     }
-    var picked = playing || timed || withSrc || list[list.length - 1] || null;
+    function withSrcPlaceholder(node) {
+      return !!(node && (node.currentSrc || node.src));
+    }
+    var picked = best || list[list.length - 1] || null;
     window.__dshActiveMedia = picked;
     return picked;
   };
@@ -77,6 +95,11 @@ const String mediaTapScript = r"""
     HTMLMediaElement.prototype.play = function () {
       remember(this);
       return originalPlay.apply(this, arguments);
+    };
+    var originalPause = HTMLMediaElement.prototype.pause;
+    HTMLMediaElement.prototype.pause = function () {
+      remember(this);
+      return originalPause.apply(this, arguments);
     };
   } catch (e) {}
 })();
@@ -151,6 +174,26 @@ const String mediaStateScript = r"""
     document.querySelectorAll('audio, video').length;
   var el = window.__dshPickMedia ? window.__dshPickMedia() : null;
 
+  function text(selector) {
+    var node = document.querySelector(selector);
+    return node ? (node.textContent || '').replace(/\s+/g, ' ').trim() : '';
+  }
+
+  // Spotify 播放条（官方网页版）：时间、艺人、正在播放按钮语义。
+  var spotifyBar = {
+    position: text('[data-testid="playback-position"]'),
+    duration: text('[data-testid="playback-duration"]'),
+    artist: text('[data-testid="now-playing-widget-v2-byline"]'),
+    playLabel: (function () {
+      var node = document.querySelector('[data-testid="control-button-playpause"]');
+      return node ? (node.getAttribute('aria-label') || '') : '';
+    })(),
+    cover: (function () {
+      var img = document.querySelector('[data-testid="cover-art-image"]');
+      return img ? (img.getAttribute('src') || '') : '';
+    })()
+  };
+
   var base = {
     mediaCount: count,
     pageTitle: document.title,
@@ -158,7 +201,12 @@ const String mediaStateScript = r"""
     nowPlayingId: nowPlayingId(),
     mediaSessionTitle: mediaSessionField('title'),
     mediaSessionArtist: mediaSessionField('artist'),
-    mediaSessionAlbum: mediaSessionField('album')
+    mediaSessionAlbum: mediaSessionField('album'),
+    barPosition: spotifyBar.position,
+    barDuration: spotifyBar.duration,
+    barArtist: spotifyBar.artist,
+    barPlayLabel: spotifyBar.playLabel,
+    barCover: spotifyBar.cover
   };
 
   if (el) {
@@ -172,6 +220,24 @@ const String mediaStateScript = r"""
     base.volume = el.volume;
     base.muted = el.muted;
     base.tag = el.tagName;
+    // 元素时长异常（占位循环视频/流）时，回落到播放条文字。
+    if (!(base.duration > 1)) {
+      base.duration = mssToMs(spotifyBar.duration) / 1000;
+      base.position = mssToMs(spotifyBar.position) / 1000;
+      base.ended = false;
+    }
+    return JSON.stringify(base);
+  }
+
+  // 没有可控制元素时，用官方播放条推断（Spotify 的兜底路径）。
+  if (spotifyBar.playLabel || spotifyBar.position || spotifyBar.duration) {
+    base.hasMedia = true;
+    base.source = 'navbar';
+    base.paused = /播放|play/i.test(spotifyBar.playLabel);
+    base.position = mssToMs(spotifyBar.position) / 1000;
+    base.duration = mssToMs(spotifyBar.duration) / 1000;
+    base.volume = 1;
+    base.muted = false;
     return JSON.stringify(base);
   }
 
@@ -263,45 +329,121 @@ String neteaseQueuePlayScript(String songId) {
 }
 
 /// 播放/暂停切换，返回操作前的状态便于诊断。
+///
+/// 有可控制的播放元素时直接操作元素（Spotify 实测会让官方界面同步）；
+/// 元素缺失时回落到官方播放条的播放键。
 const String mediaToggleScript = r"""
 (function () {
   var el = window.__dshPickMedia ? window.__dshPickMedia() : null;
-  if (!el) { return 'no-media'; }
-  var before = el.paused;
-  try {
-    if (before) { el.play(); } else { el.pause(); }
-  } catch (e) { return 'error:' + e; }
-  return JSON.stringify({ action: before ? 'play' : 'pause', tag: el.tagName });
+  if (el) {
+    var before = el.paused;
+    try {
+      if (before) { el.play(); } else { el.pause(); }
+    } catch (e) { return 'error:' + e; }
+    return JSON.stringify({
+      action: before ? 'play' : 'pause',
+      tag: el.tagName,
+      via: 'element'
+    });
+  }
+  var btn = document.querySelector('[data-testid="control-button-playpause"]');
+  if (btn) {
+    try { btn.click(); } catch (e) { return 'error:' + e; }
+    return JSON.stringify({ action: 'toggle', via: 'button' });
+  }
+  return 'no-media';
 })();
 """;
 
 const String mediaPlayScript = r"""
 (function () {
   var el = window.__dshPickMedia ? window.__dshPickMedia() : null;
-  if (!el) { return 'no-media'; }
-  try { el.play(); } catch (e) { return 'error:' + e; }
-  return 'play';
+  if (el) {
+    if (!el.paused) { return 'already-playing'; }
+    try { el.play(); } catch (e) { return 'error:' + e; }
+    return 'play';
+  }
+  var btn = document.querySelector('[data-testid="control-button-playpause"]')
+    || document.querySelector('[data-testid="play-button"]');
+  if (btn) {
+    var label = btn.getAttribute('aria-label') || '';
+    if (/播放|play/i.test(label)) {
+      try { btn.click(); } catch (e) { return 'error:' + e; }
+      return 'play-via-button';
+    }
+    return 'already-playing';
+  }
+  return 'no-media';
 })();
 """;
 
 const String mediaPauseScript = r"""
 (function () {
   var el = window.__dshPickMedia ? window.__dshPickMedia() : null;
-  if (!el) { return 'no-media'; }
-  try { el.pause(); } catch (e) { return 'error:' + e; }
-  return 'pause';
+  if (el) {
+    if (el.paused) { return 'already-paused'; }
+    try { el.pause(); } catch (e) { return 'error:' + e; }
+    return 'pause';
+  }
+  var btn = document.querySelector('[data-testid="control-button-playpause"]');
+  if (btn) {
+    var label = btn.getAttribute('aria-label') || '';
+    if (/暂停|pause/i.test(label)) {
+      try { btn.click(); } catch (e) { return 'error:' + e; }
+      return 'pause-via-button';
+    }
+    return 'already-paused';
+  }
+  return 'no-media';
 })();
 """;
 
 /// 跳转到指定秒数。
+///
+/// 优先设置播放元素的 `currentTime`（实测网易云与 Spotify 都会让官方界面同步）；
+/// 元素取不到时，回落到点击官方进度条（按目标比例换算像素）。
 String mediaSeekScript(double seconds) {
   final safe = seconds.isFinite && seconds >= 0 ? seconds : 0;
   return '''
 (function () {
+  var target = $safe;
   var el = window.__dshPickMedia ? window.__dshPickMedia() : null;
-  if (!el) { return 'no-media'; }
-  try { el.currentTime = $safe; } catch (e) { return 'error:' + e; }
-  return JSON.stringify({ seeked: el.currentTime, duration: el.duration });
+  if (el && isFinite(el.duration) && el.duration > 1) {
+    try { el.currentTime = target; } catch (e) { return 'error:' + e; }
+    return JSON.stringify({
+      seeked: el.currentTime,
+      duration: el.duration,
+      via: 'element'
+    });
+  }
+
+  // 兜底：Spotify 官方进度条（role=slider）。
+  var bar = document.querySelector('[data-testid="playback-progressbar"]')
+    || document.querySelector('[data-testid="progress-bar"]')
+    || document.querySelector('[role="slider"]');
+  if (!bar) { return 'no-media'; }
+  var duration = 0;
+  var durationNode = document.querySelector('[data-testid="playback-duration"]');
+  if (durationNode) {
+    var m = /(\\d{1,2}):(\\d{2})/.exec(durationNode.textContent || '');
+    if (m) { duration = parseInt(m[1], 10) * 60 + parseInt(m[2], 10); }
+  }
+  if (!(duration > 0) || target > duration) { return 'no-duration'; }
+  var rect = bar.getBoundingClientRect();
+  var x = rect.left + rect.width * (target / duration);
+  var y = rect.top + rect.height / 2;
+  function fire(type) {
+    var ev = new MouseEvent(type, {
+      bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0
+    });
+    bar.dispatchEvent(ev);
+  }
+  fire('pointerdown');
+  fire('mousedown');
+  fire('pointerup');
+  fire('mouseup');
+  fire('click');
+  return JSON.stringify({ seeked: target, duration: duration, via: 'progressbar' });
 })();
 ''';
 }

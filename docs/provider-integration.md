@@ -16,17 +16,18 @@
 | 能力 | 官方依据 | 本项目处理 |
 | --- | --- | --- |
 | OAuth 2.0（PKCE） | Spotify Authorization Code with PKCE | 外部浏览器 + loopback 回调，令牌存入 `SecureCredentials` |
-| 搜索 / 元数据 | Web API `/v1/search`、`/v1/tracks/{id}` | 已实现搜索；不要求 Premium，首版不申请额外 scope |
-| 用户歌单 / 收藏读取 | Web API | 首版不实现（范围外） |
-| 客户端内播放 | 需要 Web Playback SDK（浏览器、Premium）或 Spotify Connect 设备控制 | **首版不实现**；`startPlayback` 返回 `notSupported` |
+| 搜索 / 元数据（API） | Web API `/v1/search`、`/v1/tracks/{id}` | 已实现；但 Development Mode 需应用所有者有 Premium，未配置时自动走网页搜索 |
+| 搜索（网页） | `open.spotify.com/search/{q}/tracks` 页面结果 | 已实现：在隐藏页面里解析 `tracklist-row`，不依赖 Client ID |
+| 客户端内播放 | 官方网页播放器（WebView2 内真实播放） | 已实现：曲目页起播 + 元素级暂停/进度/音量；音频由 Spotify 官方页面输出 |
+| 歌词 | 网页版只在内嵌歌词视图里渲染 | 未实现，`lyricsFor` 返回 null |
+| 官方队列 | 网页版 `control-button-queue` | 未接；应用用自己的队列驱动播放 |
 | 跳转官方 App | `spotify:track:{id}` / `https://open.spotify.com/track/{id}` | 允许，用户显式点击 |
 
-结论：首版 Spotify 做「PKCE 登录 + 搜索 + 元数据 + 官方跳转」。
-若后续要做客户端内播放，必须单独评估 Web Playback SDK 的平台限制（桌面端非浏览器环境不可用）。
+说明：播放发生在官方页面内部，应用只做"遥控器"（不发请求取音频流、不碰 DRM、不落盘音频）。
+Web Playback SDK 仍然不可用于桌面端，它的作用是让**第三方页面**成为播放设备，
+与本项目"让官方页面自己播"的路线不同。
 
 公共客户端只注入 `SPOTIFY_CLIENT_ID`。`client secret` 不得提交、打包或写入日志。
-若需要在完全不登录 Spotify 的情况下搜索，应增加服务端并使用 Client Credentials；
-该 flow 不能放在客户端，因为无法安全保存 secret。
 
 桌面客户端也支持在「连接」页输入 Client ID。该 ID 是公开标识，不属于密钥，
 保存后会重建 PKCE 授权器并立即进入官方登录流程。

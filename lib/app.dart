@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'application/music_controller.dart';
+import 'domain/models.dart';
 import 'platform/desktop_window_service.dart';
 import 'platform/io_http_fetcher.dart';
 import 'platform/secure_credentials.dart';
@@ -16,9 +17,9 @@ import 'presentation/app_shell.dart';
 import 'presentation/app_window_chrome.dart';
 import 'presentation/web_player_ui.dart';
 import 'presentation/widgets/hidden_web_player.dart';
-import 'providers/music_provider.dart';
 import 'providers/fake_netease_provider.dart';
 import 'providers/fake_spotify_provider.dart';
+import 'providers/music_provider.dart';
 import 'providers/spotify_provider.dart';
 
 /// 演示默认 Provider 集合。
@@ -27,11 +28,18 @@ List<MusicProvider> buildDemoProviders() => [
   FakeNeteaseProvider(),
 ];
 
-/// 调试开关：启动即显示官方页面（仅用于自动化验证）。
+/// 调试开关：启动即把官方页面翻上来（仅用于自动化验证）。
 const bool _autoOpenOfficial = bool.fromEnvironment('DSH_AUTO_OPEN_OFFICIAL');
 
 /// Spotify 客户端 ID 是公开标识，通过构建参数注入；client secret 不进入客户端。
 const String _spotifyClientId = String.fromEnvironment('SPOTIFY_CLIENT_ID');
+
+/// 调试开关：启动时把哪一家的官方页面翻上来（netease/spotify）。
+const String _initialWebService = String.fromEnvironment('DSH_WEB_SERVICE');
+
+MusicService _webServiceFromDefines() => _initialWebService == 'spotify'
+    ? MusicService.spotify
+    : MusicService.netease;
 
 /// 测试环境（flutter test）不挂 WebView，避免缺少平台通道。
 bool get webPlayerSupported {
@@ -58,8 +66,9 @@ class MusicApp extends StatefulWidget {
 }
 
 class _MusicAppState extends State<MusicApp> {
-  late final WebPlayerHandle? _handle;
-  late final WebPlaybackEngine? _engine;
+  /// 两家官方页面各一个 WebView（各自独立的 engine，共用一个 WebView2 profile）。
+  final Map<MusicService, WebPlayerHandle> _handles = {};
+  final Map<MusicService, WebPlaybackEngine> _engines = {};
   late final WebPlayerUi _ui;
   MusicController? _ownedController;
   SpotifyProvider? _spotifyProvider;
@@ -72,34 +81,36 @@ class _MusicAppState extends State<MusicApp> {
     _ui = WebPlayerUi();
     if (widget.controller != null) {
       // 注入控制器时（测试）不创建网页播放引擎。
-      _handle = null;
-      _engine = null;
       _ownedController = widget.controller;
       return;
     }
-    if (!webPlayerSupported) {
-      // 不支持的平台：仍然创建引擎对象，只是不挂 WebView（状态显示"未挂载"）。
-      _handle = WebPlayerHandle();
-      _engine = WebPlaybackEngine(bridge: HandleWebPlayerBridge(_handle!));
-      _ownedController = MusicController(
-        providers: _buildProviders(webAttached: false),
-        webEngine: _engine,
+
+    // 两家常驻：搜索一次能同时拿到两个平台的真实结果，
+    // Spotify 播放时还能借网易云页面拿同曲歌词。
+    for (final service in const [MusicService.netease, MusicService.spotify]) {
+      if (!webPlayerSupported) break;
+      final handle = WebPlayerHandle();
+      final engine = WebPlaybackEngine(
+        bridge: HandleWebPlayerBridge(handle),
+        initialService: service,
       );
-      _engine?.start();
-      return;
+      _handles[service] = handle;
+      _engines[service] = engine;
+      engine.start();
     }
-    _handle = WebPlayerHandle();
-    _engine = WebPlaybackEngine(bridge: HandleWebPlayerBridge(_handle!));
+
     _ownedController = MusicController(
-      providers: _buildProviders(webAttached: true),
-      webEngine: _engine,
+      providers: _buildProviders(webAttached: _engines.isNotEmpty),
+      webEngines: _engines,
     );
-    _engine!.start();
-    unawaited(_restoreSpotifySession());
-    if (_autoOpenOfficial) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _ui.open();
-      });
+
+    if (_engines.isNotEmpty) {
+      unawaited(_restoreSpotifySession());
+      if (_autoOpenOfficial) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _ui.open(_webServiceFromDefines());
+        });
+      }
     }
   }
 
@@ -139,7 +150,9 @@ class _MusicAppState extends State<MusicApp> {
   void dispose() {
     if (widget.controller == null) {
       _ownedController?.dispose();
-      _engine?.dispose();
+      for (final engine in _engines.values) {
+        engine.dispose();
+      }
     }
     _ui.dispose();
     super.dispose();
@@ -172,9 +185,8 @@ class _MusicAppState extends State<MusicApp> {
       providers: [
         ChangeNotifierProvider<MusicController>.value(value: _controller),
         ChangeNotifierProvider<WebPlayerUi>.value(value: _ui),
-        if (_engine != null)
-          ChangeNotifierProvider<WebPlaybackEngine>.value(value: _engine),
-        if (_handle != null) Provider<WebPlayerHandle>.value(value: _handle),
+        if (_handles.isNotEmpty)
+          Provider<Map<MusicService, WebPlayerHandle>>.value(value: _handles),
       ],
       child: shell,
     );

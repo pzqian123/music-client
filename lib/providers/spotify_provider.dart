@@ -40,7 +40,9 @@ class SpotifyProvider implements MusicProvider {
     search: true,
     metadata: true,
     lyrics: false,
-    inAppPlayback: false,
+    // 客户端内播放走隐藏的官方网页播放器（见 WebPlaybackEngine），
+    // 不依赖 Web Playback SDK / Premium API。
+    inAppPlayback: true,
     officialHandoff: true,
   );
 

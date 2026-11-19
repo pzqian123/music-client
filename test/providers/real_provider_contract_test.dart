@@ -151,13 +151,14 @@ void main() {
       expect(result.isStarted, isFalse);
     });
 
-    test('能力声明不含客户端内播放', () {
+    test('能力声明包含客户端内播放（走官方网页播放器）', () {
       final provider = SpotifyProvider(
         clientId: 'demo-client',
         credentials: InMemoryCredentials(),
       );
       expect(provider.isDemo, isFalse);
-      expect(provider.capabilities.inAppPlayback, isFalse);
+      // API 路径 startPlayback 仍返回 notSupported，播放由 WebPlaybackEngine 负责。
+      expect(provider.capabilities.inAppPlayback, isTrue);
       expect(provider.capabilities.officialHandoff, isTrue);
     });
 

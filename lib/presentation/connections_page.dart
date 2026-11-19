@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../application/music_controller.dart';
 import '../domain/models.dart';
-import '../platform/web_playback_engine.dart';
 import '../providers/music_provider.dart';
 import '../providers/spotify_provider.dart';
 import 'web_player_ui.dart';
@@ -25,7 +24,7 @@ class ConnectionsPage extends StatelessWidget {
           const SizedBox(height: 6),
           Text('仅使用官方授权流程；本应用不会请求或保存你的账号密码。', style: theme.textTheme.bodySmall),
           const SizedBox(height: 16),
-          const _OfficialPlayerCard(),
+          _OfficialPlayerCard(music: music),
           const SizedBox(height: 12),
           for (final provider in music.providers) ...[
             _ProviderCard(music: music, provider: provider),
@@ -46,15 +45,48 @@ class ConnectionsPage extends StatelessWidget {
   }
 }
 
-class _OfficialPlayerCard extends StatelessWidget {
-  const _OfficialPlayerCard();
+class _OfficialPlayerCard extends StatefulWidget {
+  const _OfficialPlayerCard({required this.music});
+
+  final MusicController music;
+
+  @override
+  State<_OfficialPlayerCard> createState() => _OfficialPlayerCardState();
+}
+
+class _OfficialPlayerCardState extends State<_OfficialPlayerCard> {
+  /// 每家官方页面的登录状态（null = 还没检测）。
+  final Map<MusicService, bool?> _login = {};
+  bool _checking = false;
+
+  Future<void> _openPage(MusicService service) async {
+    context.read<WebPlayerUi>().open(service);
+  }
+
+  Future<void> _checkLogin() async {
+    setState(() => _checking = true);
+    const services = [MusicService.netease, MusicService.spotify];
+    final results = <MusicService, bool?>{};
+    for (final service in services) {
+      if (!widget.music.isWebEngineAttached(service)) continue;
+      results[service] = await widget.music.checkWebLogin(service);
+    }
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _login.addAll(results);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final ui = context.watch<WebPlayerUi>();
-    final engine = context.watch<WebPlaybackEngine?>();
-    final state = engine?.state;
+    final music = widget.music;
+    final engines = music.webEngines;
+    final activeService = music.webService;
+    final activeState = activeService == null
+        ? null
+        : engines[activeService]?.state;
 
     return Card(
       key: const Key('official-player-card'),
@@ -69,36 +101,144 @@ class _OfficialPlayerCard extends StatelessWidget {
                   child: Text('官方网页播放器', style: theme.textTheme.titleMedium),
                 ),
                 Text(
-                  engine == null ? '不可用' : (engine.isAttached ? '已就绪' : '未挂载'),
+                  engines.isEmpty ? '不可用' : '两家常驻 · 同时搜索',
                   key: const Key('official-player-state'),
                   style: theme.textTheme.bodySmall,
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
-              '音频由官方页面输出，界面完全由本应用控制。首次使用请在这里登录（登录信息只存在本机）。',
+              '网易云与 Spotify 的官方页面都在后台常驻：搜索一次同时出两个平台的结果，'
+              'Spotify 播放时自动去网易云取同曲歌词。每家各登录一次即可。',
               style: theme.textTheme.bodySmall,
             ),
-            if (state != null && state.hasMedia) ...[
+            const SizedBox(height: 12),
+            for (final service in const [
+              MusicService.netease,
+              MusicService.spotify,
+            ]) ...[
+              _ServiceRow(
+                service: service,
+                attached: music.isWebEngineAttached(service),
+                active: activeService == service,
+                login: _login[service],
+                checking: _checking,
+                onOpen: () => _openPage(service),
+                onCheck: _checkLogin,
+              ),
               const SizedBox(height: 8),
+            ],
+            if (activeState != null && activeState.hasMedia) ...[
+              const SizedBox(height: 2),
               Text(
-                '当前：${state.nowPlaying.isEmpty ? "未知曲目" : state.nowPlaying} · '
-                '${state.paused ? "已暂停" : "播放中"}',
+                '正在播放：${activeState.nowPlaying.isEmpty ? "未知曲目" : activeState.nowPlaying} · '
+                '${activeState.paused ? "已暂停" : "播放中"}',
                 style: theme.textTheme.labelSmall,
               ),
             ],
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              children: [
-                FilledButton.icon(
-                  key: const Key('open-official-page'),
-                  onPressed: ui.open,
-                  icon: const Icon(Icons.login, size: 16),
-                  label: const Text('打开官方页面登录/切歌'),
-                ),
-              ],
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              key: const Key('open-official-page'),
+              onPressed: () => _openPage(activeService ?? MusicService.netease),
+              icon: const Icon(Icons.login, size: 16),
+              label: const Text('打开官方页面登录/切歌'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 一家服务的状态行：是否挂载、登录状态、打开官方页面。
+class _ServiceRow extends StatelessWidget {
+  const _ServiceRow({
+    required this.service,
+    required this.attached,
+    required this.active,
+    required this.login,
+    required this.checking,
+    required this.onOpen,
+    required this.onCheck,
+  });
+
+  final MusicService service;
+  final bool attached;
+  final bool active;
+  final bool? login;
+  final bool checking;
+  final VoidCallback onOpen;
+  final VoidCallback onCheck;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final loginLabel = !attached
+        ? '未挂载'
+        : login == null
+        ? '未检测'
+        : login!
+        ? '已登录'
+        : '未登录';
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: active ? 0.55 : 0.3,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: active ? theme.colorScheme.primary : theme.dividerColor,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        child: Row(
+          children: [
+            Icon(
+              service == MusicService.spotify
+                  ? Icons.graphic_eq
+                  : Icons.cloud_queue,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${service.displayName}${active ? "（正在使用）" : ""}',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                  Text(
+                    '登录状态：$loginLabel',
+                    key: Key('official-login-${service.name}'),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: login == false
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              key: Key('official-open-${service.name}'),
+              onPressed: attached ? onOpen : null,
+              child: const Text('打开官方页面'),
+            ),
+            IconButton(
+              key: Key('official-check-${service.name}'),
+              tooltip: '检测登录',
+              onPressed: attached && !checking ? onCheck : null,
+              icon: checking
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 18),
             ),
           ],
         ),
@@ -139,7 +279,7 @@ class _SpotifySetupPanelState extends State<_SpotifySetupPanel> {
   String get _maskedClientId {
     final id = widget.provider.clientId ?? '';
     if (id.length <= 10) return id;
-    return '${id.substring(0, 6)}…${id.substring(id.length - 4)}';
+    return '${id.substring(0, 6)}...${id.substring(id.length - 4)}';
   }
 
   Future<void> _openDashboard() async {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../application/music_controller.dart';
+import '../domain/models.dart';
 import '../platform/web_player_engine.dart';
 import 'connections_page.dart';
 import 'immersive_lyrics_page.dart';
@@ -95,7 +96,8 @@ class _AppShellState extends State<AppShell> {
     final immersive = viewMode == ViewMode.immersive && hasTrack;
 
     final ui = context.watch<WebPlayerUi>();
-    final handle = context.read<WebPlayerHandle?>();
+    final handles = context.read<Map<MusicService, WebPlayerHandle>?>();
+    final engines = context.watch<MusicController>().webEngines;
 
     final wide = MediaQuery.sizeOf(context).width >= 900;
     final pages = const <Widget>[
@@ -141,27 +143,39 @@ class _AppShellState extends State<AppShell> {
             ),
           );
 
-    if (handle == null) {
+    if (handles == null || handles.isEmpty) {
       return immersive ? const ImmersiveLyricsPage() : app;
     }
 
-    // 官方页面永远在最底层：平时被应用界面盖住，登录时才翻到最上面。
-    // 注意：沉浸模式下也必须保留这个 Stack，否则 WebView 被卸载 → 音频停止。
-    return Stack(
-      children: [
-        if (ui.isMounted)
+    // 两家官方页面都常驻在最底层（平时被应用界面盖住），顺序决定谁在最上面。
+    // 要显示某一家时把那一家的 Stack 位置放到最后；注意不能卸载 WebView，
+    // 否则音频会立刻停止。
+    final order = ui.isShowing && ui.service == MusicService.spotify
+        ? const [MusicService.netease, MusicService.spotify]
+        : const [MusicService.spotify, MusicService.netease];
+
+    final players = <Widget>[
+      for (final service in order)
+        if (handles[service] != null && engines[service] != null)
           Positioned.fill(
             child: HiddenWebPlayer(
-              target: neteaseWebTarget,
-              handle: handle,
+              key: ValueKey('official-web-${service.name}'),
+              target: webTargetFor(service) ?? neteaseWebTarget,
+              handle: handles[service]!,
               onLoaded: () {},
             ),
           ),
+    ];
+
+    return Stack(
+      children: [
+        ...players,
         if (!ui.isShowing)
           Positioned.fill(
             child: immersive ? const ImmersiveLyricsPage() : app,
           ),
-        if (ui.isShowing) _OfficialPageBar(onClose: ui.close),
+        if (ui.isShowing)
+          _OfficialPageBar(service: ui.service, onClose: ui.close),
       ],
     );
   }
@@ -169,8 +183,9 @@ class _AppShellState extends State<AppShell> {
 
 /// 官方页面顶部的一条轻量工具条（其余区域让给官方页面）。
 class _OfficialPageBar extends StatelessWidget {
-  const _OfficialPageBar({required this.onClose});
+  const _OfficialPageBar({required this.service, required this.onClose});
 
+  final MusicService service;
   final VoidCallback onClose;
 
   @override
@@ -189,10 +204,10 @@ class _OfficialPageBar extends StatelessWidget {
               const SizedBox(width: 12),
               const Icon(Icons.public, size: 16),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  '官方页面：在这里登录/切歌，完成后点右侧按钮回到应用',
-                  style: TextStyle(fontSize: 12),
+                  '${service.displayName} 官方页面：在这里登录/切歌，完成后点右侧按钮回到应用',
+                  style: const TextStyle(fontSize: 12),
                 ),
               ),
               TextButton(

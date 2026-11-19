@@ -14,6 +14,63 @@
 | 桥接层能否控制真实 `<audio>` | ✅ 能 | 自测：play / pause / seek / 状态回读全部正确 |
 | 页面被盖住后音频是否继续 | ✅ 继续 | 自测：覆盖后 2.5s 内位置推进 2502ms |
 
+## 双网页播放器（2026-11-19）：两家常驻 + 跨服务歌词
+
+同一次搜索要看到两个平台，就不能只留一个 WebView：
+
+- 应用启动时同时挂 `music.163.com` 与 `open.spotify.com` 两个 WebView2，
+  它们共用同一个 WebView2 profile，因此两家的登录态互不干扰但都可用。
+- 每个 WebView 配一个 `WebPlaybackEngine`（服务固定），
+  `MusicController` 用 `webEngines` 映射决定"这条轨道该由谁播"。
+- 显示层只决定"谁翻到最上面"：`WebPlayerUi.open(service)`；
+  另一家的 WebView 只是被盖住，不卸载（卸载会立刻停音频）。
+- 切到另一家播放时，先对上一家 `pausePlayback()`，保证只有一家出声。
+
+**跨服务歌词**：Spotify 网页版不给 LRC，但网易云页面能按歌名搜到同曲并返回带时间戳歌词。
+于是 Spotify 曲目起播后，用「标题 + 艺人」在网易云页面搜索，挑分数最高的一条
+（标题完全一致 +3、包含 +2、艺人匹配 +1、时长差 ≤3s +2 / ≤10s +1，低于 2 分放弃），
+再取它的 LRC。实测 "Love Story / Taylor Swift" 能正确匹配并同步高亮。
+
+## 真实环境验证（Spotify，2026-11-19 已通过）
+
+环境：Chrome 156 / WebView2（Edge 157）、登录的真实 Spotify 账号。
+
+| 采样 | 播放元素 | 官方界面 | 结论 |
+| --- | --- | --- | --- |
+| 起播 | `paused=false, t=17.4, d=236.31` | 0:16 / 3:56，按钮「暂停」 | 曲目页打开即自动起播 |
+| `el.currentTime = 60` | `t=61.0` | 1:00 | 元素 seek 生效，官方界面同步 |
+| 点进度条 75% | `t=170.3` | 2:50 | 应用侧 seek 也走元素 |
+| `el.pause()` | `paused=true, t` 冻结 | 按钮变「播放」 | 暂停真生效 |
+| `el.play()` | `paused=false, t` 继续 | 按钮变「暂停」 | 继续播放生效 |
+
+### Spotify 的两个致命坑
+
+1. **DOM 里的 `<video>` 不是播放源**。它是 `loop` 的 5.7 秒占位视频，
+   `querySelectorAll('audio, video')` 只能拿到它；`pause()` 它，音乐照放。
+   真正的播放元素是 `document.createElement('video')` 创建后**不挂 DOM** 的对象，
+   必须靠 `mediaTapScript` 在 `AT_DOCUMENT_START` 劫持 `createElement` / `play` / `pause` 登记。
+   验证方法：先注入劫持脚本，再切歌触发 `play()`，然后读登记表拿到 `duration=242.19` 的真元素。
+2. **曲目页是整页重载**。`/track/{id}` 会重新加载文档（并自动附上 `?autoplay_ok=1`），
+   所以每次导航后注入脚本会重新安装，等待时间要放宽（实测 24 轮 × 500ms 足够）。
+
+### Spotify 已核对的选择器（2026-11 生产 DOM）
+
+| 用途 | 选择器 |
+| --- | --- |
+| 当前曲名 | `[data-testid="context-item-link"]`（文本；href 指向 album/playlist，不是曲目） |
+| 当前艺人 | `[data-testid="now-playing-widget-v2-byline"]` |
+| 播放/暂停 | `[data-testid="control-button-playpause"]`（aria-label「播放」/「暂停」） |
+| 上一首/下一首 | `[data-testid="control-button-skip-back"|"control-button-skip-forward"]` |
+| 进度文本 | `[data-testid="playback-position"]` / `[data-testid="playback-duration"]` |
+| 进度条 | `[data-testid="playback-progressbar"]`（role=slider） |
+| 播放条封面 | `[data-testid="cover-art-image"]`（640px） |
+| 搜索结果行 | `[data-testid="tracklist-row"]`，行内 `a[href*="/track/"]` / `a[href*="/artist/"]` |
+| 曲目页大按钮 | `[data-testid="action-bar-row"] [data-testid="play-button"]` |
+| 登录判定 | `[data-testid="user-widget-link"]` 存在即已登录 |
+
+封面可以直接用 `i.scdn.co` 的 URL（实测 Dart 侧带浏览器 UA 即可 200），
+列表里的 64px 尺寸段 `ab67616d00004851` 换成 `ab67616d0000b273` 就是 640px。
+
 ## 真实环境验证（网易云，已通过）
 
 2026-10-31 23:5x，用户在本应用内登录网易云并播放《少女的祈祷》，随后点「盖住官方页面」：

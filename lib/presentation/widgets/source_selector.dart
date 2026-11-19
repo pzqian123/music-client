@@ -22,7 +22,11 @@ class SourceSelector extends StatelessWidget {
       children: [
         for (final source in track.sources)
           ActionChip(
-            key: Key('source-${track.id}-${source.service.name}'),
+            // 同一服务的两条来源（Spotify 搜索里常见"同曲不同版本"）也要能区分，
+            // 否则 Wrap 里会出现重复 Key。
+            key: Key(
+              'source-${track.id}-${source.service.name}-${source.providerTrackId}',
+            ),
             avatar: Icon(
               source.playable ? Icons.play_arrow : Icons.open_in_new,
               size: 14,

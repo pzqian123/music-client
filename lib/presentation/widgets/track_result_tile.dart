@@ -12,6 +12,17 @@ String formatDuration(Duration duration) {
   return '$minutes:$seconds';
 }
 
+/// 「艺人 · 专辑 · 时长」；缺哪段就省略，避免 Spotify 结果出现空的专辑位。
+String trackMetaLine(Track track, {String? durationText}) {
+  final duration = durationText ?? formatDuration(track.duration);
+  final parts = <String>[
+    if (track.artist.isNotEmpty) track.artist,
+    if (track.album.isNotEmpty) track.album,
+    if (duration.isNotEmpty) duration,
+  ];
+  return parts.join(' · ');
+}
+
 class TrackResultTile extends StatelessWidget {
   const TrackResultTile({
     super.key,
@@ -60,7 +71,7 @@ class TrackResultTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${track.artist} · ${track.album} · ${formatDuration(track.duration)}',
+                      trackMetaLine(track),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall,
