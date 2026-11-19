@@ -1,9 +1,10 @@
-﻿# WebView2 CDP 调试助手（仅用于本地验证，不参与应用运行）
+# WebView2 CDP 调试助手（仅用于本地验证，不参与应用运行）
 #
 # 用途：应用以 DSH_WEBVIEW_DEBUG_PORT=<port> 启动后，WebView2 会开放远程调试端口。
 # 本脚本通过 CDP 做两件事：
-#   1. -Mode set-cookie：把本机浏览器里已有的 Spotify 会话（sp_dc）注入 WebView2，
-#      省掉在应用内重复输入账号密码，便于端到端验证播放链路；
+#   1. -Mode set-cookie：把**你自己本机浏览器**里已有的 Spotify 会话（sp_dc）
+#      注入到应用自己的 WebView2 里，省掉在应用内重复登录，便于端到端验证播放链路。
+#      仅用于验证自己的账号，不要用于他人会话。
 #   2. -Mode eval：在官方页面上下文里执行任意 JS 并打印 JSON 结果。
 #
 # 示例：

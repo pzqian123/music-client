@@ -4,7 +4,7 @@
 
 ## 正式项目位置
 
-- 项目目录：`D:\dshws\music-client`
+- 项目目录：`<repo>`
 - 当前分支：`master`
 - Git 工作区：有未提交改动（Spotify 网页播放器实现，见下方"本次改动"）
 - Windows EXE：`build\windows\x64\runner\Debug\music_client.exe`（默认构建，未带调试 define）
@@ -122,7 +122,7 @@ Android 使用 AGP 8.13.1 / Gradle 8.14.3 / Kotlin 2.3.0；
 ## 常用命令
 
 ```powershell
-$env:PATH = "D:\dshws\.toolchains\flutter\bin;D:\dshws\.toolchains\flutter\bin\cache\dart-sdk\bin;$env:PATH"
+$env:PATH = "<toolchain-root>\flutter\bin;<toolchain-root>\flutter\bin\cache\dart-sdk\bin;$env:PATH"
 flutter analyze
 flutter test
 flutter build windows --debug

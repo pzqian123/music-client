@@ -184,4 +184,4 @@ build\windows\x64\runner\Debug\music_client.exe
 
 - `windows/CMakeLists.txt` 已加 `/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS`，
   否则 flutter_inappwebview 在 VS2026 的 MSVC 14.5x 下编译失败。
-- 插件需要 `nuget.exe` 拉取 WebView2 SDK，本机放在 `D:\dshws\.toolchains\nuget.exe`。
+- 插件需要 `nuget.exe` 拉取 WebView2 SDK，本机放在 `<toolchain-root>\nuget.exe`。

@@ -1,6 +1,6 @@
 # 工具链验证记录
 
-验证时间：2026-11-15（本机 DESKTOP-Q7B00UD）
+验证时间：2026-11-15（Windows 开发机）
 
 ## Flutter
 
@@ -9,14 +9,14 @@ Flutter 3.47.9 • channel stable
 Framework revision c197ca5199 (2026-10-29)
 Engine hash 9e025265bef30b838c0c1b68cad19decf97048f2
 Tools • Dart 3.13.7 • DevTools 2.60.0
-位置：D:\dshws\.toolchains\flutter
+位置：<toolchain-root>\flutter
 ```
 
 ## Visual Studio（Windows 构建）
 
 ```
 [√] Visual Studio - develop Windows apps (Visual Studio Community 2026 18.11.3)
-    Visual Studio at D:\Program Files\Microsoft Visual Studio\18\Community
+    Visual Studio at <VS install>
     Visual Studio Community 2026 version 18.11.12328.437
     Windows 10 SDK version 10.0.26100.0
 ```
@@ -26,15 +26,15 @@ Tools • Dart 3.13.7 • DevTools 2.60.0
 ## Android
 
 ```
-Android SDK at D:\dshws\.toolchains\android-sdk
+Android SDK at <toolchain-root>\android-sdk
 Platform android-36, build-tools 36.0.0
-JDK: D:\dshws\.toolchains\jdk-21.0.12+8 (Temurin 21.0.12+8)
+JDK: <toolchain-root>\jdk-21.0.12+8 (Temurin 21.0.12+8)
 licenses: All SDK package licenses accepted
 ```
 
 已知告警：
 
-- `Multiple adb binaries found`：另存在 `D:\platform-tools\adb.exe`，不影响构建，仅可能影响设备识别。
+- `Multiple adb binaries found`：系统里另有一份 `platform-tools\adb.exe`，不影响构建，仅可能影响设备识别。
 - 无模拟器 / 无真机：只能构建 APK，不能 `flutter run -d android`。
 
 ## 网络限制（已通过镜像绕过）
@@ -63,7 +63,7 @@ licenses: All SDK package licenses accepted
 | 目标 | 状态 | 证据 |
 | --- | --- | --- |
 | 静态检查 | ✅ | `flutter analyze` → No issues found |
-| 测试 | ✅ | `flutter test` → 161 passed |
+| 测试 | ✅ | `flutter test` → 175 passed |
 | Android APK | ✅ | `build/app/outputs/flutter-apk/app-debug.apk`（debug，含全部 ABI） |
 | Windows 桌面 | ✅ | `build/windows/x64/runner/Debug/music_client.exe`，已启动验证 |
 | Web 预览（仅用于看界面） | ✅ | `build/web` + `tools/serve_web.js`，截图见 `docs/screenshots/` |

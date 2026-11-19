@@ -370,7 +370,7 @@ Expected: all tests pass; update the recorded count in `TOOLCHAIN.md`.
 
 - [ ] **Step 3: Build Windows**
 
-Set `PATH` to include `D:\dshws\.toolchains` for NuGet, then run:
+Set `PATH` to include `<toolchain-root>` for NuGet, then run:
 
 ```powershell
 flutter build windows --debug

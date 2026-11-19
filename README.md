@@ -1,130 +1,130 @@
-# 音乐聚合（MusicMerge）
+# 音乐聚合 · MusicMerge
 
-Spotify 与网易云音乐的聚合客户端：Windows + Android（Flutter），
-统一搜索、保守去重、来源切换、统一队列、分栏播放页与 Apple Music 风格的沉浸式同步歌词。
+把 **Spotify** 和 **网易云音乐** 放进一个播放器：一次搜索同时出两家的结果，
+播放时自动配同步歌词，界面完全由自己控制（官方网页只负责在后台出声）。
 
-当前版本已经接入真实数据与播放链路：
+Flutter 编写，Windows 桌面为主，Android 共用同一套业务代码。
 
-- 网易云音乐：通过隐藏的官方网页搜索、抓取曲目/封面/歌词，并由官方网页媒体元素播放。
-- 网易云队列：读取并接管官方网页播放列表，在客户端内展示并可直接点击官方队列行切歌。
-- Spotify：配置客户端 ID 后走官方 Authorization Code + PKCE，使用 Web API 做搜索和元数据。
-  搜索不要求 Spotify Premium；客户端内播放仍不支持，用户可显式跳转官方 App。
-- 未配置 Spotify，或在无法挂载官方网页播放器的平台上，自动回退到可重复的演示数据。
+![同时搜索两个平台](docs/screenshots/search-both-platforms.png)
 
-接入边界与隐私要求见 [docs/provider-integration.md](docs/provider-integration.md)。
+<p align="center">
+  <img src="docs/screenshots/spotify-with-netease-lyrics.png" width="49%" alt="Spotify 播放 + 网易云歌词">
+  <img src="docs/screenshots/spotify-player-page.png" width="49%" alt="播放页">
+</p>
 
-## 已实现
+## 特性
 
-- 统一搜索：一个搜索框同时查询两个服务，结果标准化并合并高置信度同曲；来源可显式切换。
-- 保守去重：标题/艺人标准化 + 版本标记（Live、Remix、现场等）必须完全一致 + 时长差 ≤ 8s 才合并。
-- 播放页：宽屏左 38% 专辑与控制、右 62% 同步歌词；窄屏上下堆叠。
-- 沉浸模式：全窗口歌词、专辑主色氛围背景、居中滚动、底部精简控制；Esc / 返回键退出。
-- 苹果音乐风格沉浸歌词：焦点行弹簧上浮、逐字发光、间奏呼吸点、模糊专辑背景与自动淡出控制条。
-- 歌词引擎：逐字优先，缺可靠逐字时间戳整体回退逐行，无时间戳显示静态并提示，无歌词显示「暂无歌词」。
-- 能力状态：连接页逐项展示搜索 / 元数据 / 歌词 / 客户端内播放 / 跳转官方，未获授权不假装可用。
-- 错误隔离：一个服务失败时另一个服务的结果照常展示，并给出局部重试。
-- 隐私边界：不请求密码，界面无密码输入框；凭证抽象只接受服务端返回值。
-- Spotify 令牌存入平台安全存储并在启动时恢复；授权过期时自动刷新。
-- 播放到曲目结尾时自动进入队列下一首；队列对同一曲目去重。
-- Windows 使用无边框窗口，应用内提供品牌标题栏与最小化、最大化/还原、关闭按钮。
+- **双平台联合搜索**：一个搜索框并行查询 Spotify 与网易云的官方网页，结果标准化后合并；
+  高置信度同曲合并成一条（标题/艺人标准化 + 版本标记完全一致 + 时长差 ≤ 8s），来源可切换。
+- **Spotify 客户端内播放**：不依赖 Premium 与 Web Playback SDK——应用内嵌 Spotify 官方网页播放器，
+  直接控制其底层播放元素，实现播放/暂停、拖动进度、音量、切歌。
+- **网易云客户端内播放**：同样驱动官方网页，读取官方播放列表并在应用队列里点击切歌。
+- **跨服务歌词**：Spotify 曲目起播后，按标题/艺人/时长去网易云匹配同曲，取带时间戳的 LRC。
+- **Apple Music 风格沉浸歌词**：焦点行弹簧上浮、逐字发光、间奏呼吸点、模糊专辑背景。
+- **保守去重**：Live / Remix / 现场等版本标记必须完全一致才合并，宁可多一条也不错合并。
+- **无边框 Windows 窗口**：应用内标题栏与最小化/最大化/关闭。
+- **能力不撒谎**：连接页逐项展示搜索 / 元数据 / 歌词 / 内播 / 跳转能力与登录状态。
 
-## 环境准备（本机已装好）
+## 工作原理（一句话）
 
-| 工具 | 路径 |
+应用启动时把两个官方网页（`music.163.com`、`open.spotify.com`）各挂在一个 WebView2 里，
+盖在自己的界面下方；通过 `AT_DOCUMENT_START` 注入脚本登记并操作官方页面的
+`<audio>/<video>` 元素，音频由官方页面自己输出。
+
+- 不请求、不解析、不落盘任何音频流；不涉及 DRM 解密。
+- 账号在官方页面里由用户自己登录，登录态只存在本机 WebView2 profile
+  （`%LOCALAPPDATA%\MusicMerge\webview2`），应用不接触密码。
+- 搜索与歌词解析都发生在官方页面上下文里，不调用任何私有 API。
+
+细节与实测记录见 [docs/web-player-feasibility.md](docs/web-player-feasibility.md)。
+
+## 环境要求
+
+| 项目 | 版本 |
 | --- | --- |
-| Flutter 3.47.9 / Dart 3.13.7 | `D:\dshws\.toolchains\flutter` |
-| JDK 21 (Temurin) | `D:\dshws\.toolchains\jdk-21.0.12+8` |
-| Android SDK 36 | `D:\dshws\.toolchains\android-sdk` |
-| Visual Studio 2026 Community | `D:\Program Files\Microsoft Visual Studio\18\Community` |
+| 系统 | Windows 10 1809+ / 11（需要 WebView2 Runtime，Win11 自带） |
+| Flutter | 3.47+（Dart 3.13+） |
+| Visual Studio | 2022/2026，勾选「使用 C++ 的桌面开发」 |
+| Android（可选） | JDK 21、Android SDK 36、AGP 8.13.1 |
 
-每次新开终端需要设置环境变量（PowerShell）：
-
-```powershell
-$env:JAVA_HOME = "D:\dshws\.toolchains\jdk-21.0.12+8"
-$env:ANDROID_HOME = "D:\dshws\.toolchains\android-sdk"
-$env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
-$env:PATH = "D:\dshws\.toolchains\flutter\bin;$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:PATH"
-```
-
-## 常用命令
+## 构建与运行
 
 ```powershell
-flutter pub get                # 安装依赖
-flutter analyze                # 静态检查，要求 0 issue
-flutter test                   # 全部单元测试与 Widget 测试
-flutter build apk --debug      # Android 调试包
-flutter build windows --debug  # Windows 桌面（需要“开发人员模式”以支持插件符号链接）
-flutter run -d windows         # 本地运行
+flutter pub get
+flutter analyze            # 要求 0 issue
+flutter test               # 175 个测试
+flutter run -d windows     # 本地调试运行
+flutter build windows --debug
 ```
 
-### 启用 Spotify 真实搜索
+Windows 构建注意：
 
-1. 在 Spotify Developer Dashboard 创建应用。
-2. 添加 loopback redirect URI，例如 `http://127.0.0.1:8080/callback`。
-   Spotify 允许 loopback IP 使用动态端口，因此应用启动时会选择可用端口，但路径保持 `/callback`。
-3. 在应用「连接」页点击「打开 Dashboard」，把 Client ID 填入软件并点击「保存并登录」。
-    Client ID 会保存在本机，之后启动时自动恢复。
-4. 也可以使用构建参数预置 Client ID：
+1. Flutter 带插件的桌面构建需要系统开启「开发人员模式」（符号链接）。
+2. `flutter_inappwebview_windows` 需要 `nuget.exe` 拉取 WebView2 SDK，把它放进 `PATH` 即可。
+3. 首次构建较慢（要编译 WebView2 相关插件），之后是增量。
+
+## 使用
+
+1. 启动应用 → 「连接」→ 官方网页播放器里点某一家的「打开官方页面」，在官方页面登录一次。
+   两家各登录一次，之后一直有效。
+2. 回「搜索」输入关键词 → 结果里同时出现两家的来源按钮。
+3. 点结果或来源按钮开始播放 → 「播放」页控制进度/暂停；Spotify 曲目会自动配上同步歌词。
+
+### 可选配置
+
+Spotify Web API 搜索（PKCE）默认不需要；想启用时在「连接」页填入自己在
+[Spotify Developer Dashboard](https://developer.spotify.com/dashboard) 创建的应用 Client ID，
+回调地址填 `http://127.0.0.1:8080/callback`。
 
 ```powershell
 flutter run -d windows --dart-define=SPOTIFY_CLIENT_ID=你的客户端ID
 ```
 
-Spotify 免费账号可用于本项目的搜索与元数据。Web Playback SDK 的客户端内流媒体播放要求
-Premium，且不适合作为当前 Windows/Android 架构内的通用播放后端，因此本项目仍通过
-“打开官方 App”处理 Spotify 播放。
+> 客户端 ID 是公开标识；**不要**把 client secret 放进客户端。
 
-不要把 client secret 放进客户端。本项目是公共客户端，只使用客户端 ID 与 PKCE。
+调试用的构建参数（一般用不到）：`DSH_AUTO_OPEN_OFFICIAL`、`DSH_AUTO_SEARCH`、
+`DSH_AUTO_PLAY_FIRST`、`DSH_WEB_SERVICE`，以及环境变量 `DSH_WEBVIEW_DEBUG_PORT`
+（打开 WebView2 远程调试端口，配合 `tool/spotify_cdp_verify.ps1`）。
 
-## 构建环境注意事项
-
-1. **符号链接**：Flutter 带插件的 Windows 构建要求系统开启「开发人员模式」
-   （设置 → 系统 → 开发者选项 → 开发人员模式），否则报
-   `Building with plugins requires symlink support`。
-2. **国内网络**：本机无法直连 `maven.google.com` 与 GitHub，`android/settings.gradle.kts` 与
-   `android/build.gradle.kts` 已把阿里云镜像放在 `google()` 之前；
-   Gradle 发行包改用腾讯镜像（见 `android/gradle/wrapper/gradle-wrapper.properties`）。
-   网络正常的环境可以把这两处改回官方源。
-3. `flutter_inappwebview_android` 当前版本不兼容 AGP 9，项目固定为 AGP 8.13.1；
-   不要单独升级 AGP，除非插件已发布兼容版本。
-
-## 演示数据回退
-
-| 服务 | 曲目 | 说明 |
-| --- | --- | --- |
-| Spotify | 夜空中最亮的星 / 夜空中最亮的星 (Live) / 晴天 / Bohemian Rhapsody | 账号无客户端内播放权限，播放会提示跳转官方 App |
-| 网易云音乐 | 夜空中最亮的星 / 晴天 / 平凡之路 / 稻香 | 支持客户端内演示播放；含逐字、静态、无歌词三种歌词 |
-
-当 Spotify 未配置或官方网页播放器不可用时，搜索「夜空」可直接看到同曲合并（2 个来源）
-与 Live 版分开保留。真实网易云搜索由官方网页完成，不会调用 `weapi` / `eapi`。
-
-## 手动验收清单
-
-- [ ] 配置 Spotify 后搜索「夜空」：出现一条带 Spotify + 网易云两个来源的结果，以及一条 Live 版。
-- [ ] 点击 Spotify 来源：进入 blocked 状态，显示原因与「打开官方 App」。
-- [ ] 点击网易云来源：进入播放态，歌词按行/逐字推进。
-- [ ] 播放到结尾：队列有下一首时自动切歌。
-- [ ] 播放页「沉浸模式」：进入全屏歌词，Esc 或返回按钮回到分栏，进度不丢。
-- [ ] 「平凡之路」：显示「暂无时间戳歌词」；「稻香」：显示「暂无歌词」。
-- [ ] 一个服务失败后另一方结果仍显示，并出现「重试」。
-- [ ] 连接页无任何密码输入框；「打开官方 App」在没有可跳转曲目时禁用。
-
-## 目录
+## 目录结构
 
 ```
 lib/
-├── application/   播放时钟、唯一状态源 MusicController
+├── application/   唯一状态源 MusicController、播放时钟
 ├── domain/        模型、去重、歌词时间轴、播放状态机（纯 Dart）
-├── platform/      凭证存储与官方跳转抽象
-├── providers/     统一 Provider 契约 + Spotify 真实实现 + 演示实现
-└── presentation/  搜索页、播放页、沉浸歌词页、连接页与组件
-test/              领域 / 应用 / Provider / Widget 测试
-docs/              设计文档、接入边界、排障手册
+├── platform/      官方网页播放器引擎、注入脚本、PKCE、凭证存储
+├── providers/     Provider 契约 + Spotify 真实实现 + 演示实现
+└── presentation/  搜索页、播放页、沉浸歌词、连接页与组件
+test/              领域 / 应用 / Provider / Widget 测试（175 个）
+tool/              脚本自检、WebView2 CDP 验证、预览入口
+docs/              设计文档、网页播放器可行性记录、接入边界
 ```
 
-## 尚未完成
+## 测试
 
-- 网易云开放平台正式资质与官方 API 播放/歌词接口（当前使用官方网页播放器）。
-- Spotify 客户端内播放（Premium + Web Playback SDK，不在当前产品边界内）。
-- 后台播放、系统媒体控制与跨平台媒体通知。
-- 推荐、歌单迁移、曲库写同步、遥测（均不在首版范围）。
+```powershell
+flutter test
+node tool/verify_web_player_scripts.mjs   # 用真实注入脚本跑 Spotify 的 DOM 形状
+```
+
+`tool/spotify_cdp_verify.ps1` 可以在应用以 `DSH_WEBVIEW_DEBUG_PORT` 启动后，
+通过 CDP 读取/驱动官方页面，用于排查播放链路。
+
+## 文档
+
+- [网页播放器可行性与实测记录](docs/web-player-feasibility.md)
+- [接入边界与隐私](docs/provider-integration.md)
+- [跨平台设计](docs/superpowers/specs/2026-10-31-cross-platform-music-client-design.md)
+
+## 许可
+
+[MIT](LICENSE)。
+
+## 声明
+
+本项目是个人学习作品，与 Spotify、网易云音乐无任何关联，未获其授权或认可。
+Spotify / 网易云音乐的名称与商标归各自所有者。
+
+- 播放发生在你本机的官方网页里，音频由官方页面输出；本项目不下载、不转码、不分发音频内容。
+- 需要你自己的账号；登录信息保存在本机，不会上传。
+- 各服务的可用性、界面与规则随时可能变化，脚本选择器随之失效属于正常现象，欢迎提 issue。
