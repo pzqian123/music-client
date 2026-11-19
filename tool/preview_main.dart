@@ -44,8 +44,15 @@ Future<void> main() async {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
-        home: Scaffold(
-          body: immersive ? const ImmersiveLyricsPage() : const PlayerPage(),
+        home: Consumer<MusicController>(
+          builder: (context, controller, _) {
+            final showImmersive =
+                controller.viewMode == ViewMode.immersive &&
+                controller.playback.current != null;
+            return showImmersive
+                ? const ImmersiveLyricsPage()
+                : const PlayerPage();
+          },
         ),
       ),
     ),
